@@ -59,7 +59,7 @@ function staggerDelayMs(entry, index) {
 async function getCachedLeaderboardPackage(circleId) {
   const key = String(circleId);
   const cached = circleCache.get(key);
-  const now = Date.now();
+  const now = new Date();
   if (cached && now - cached.fetchedAt < CIRCLE_CACHE_TTL_MS) {
     return cached;
   }
@@ -157,7 +157,7 @@ export async function runLeaderboardTick() {
     const channels = getAllLeaderboardChannels();
     if (!channels.length) return;
 
-    const now = Date.now();
+    const now = new Date();
     const uniqueCircleIds = [...new Set(channels.map((c) => String(c.circleId)))];
     const packagesByCircle = new Map();
 
@@ -181,7 +181,7 @@ export async function runLeaderboardTick() {
       if (i > 0) {
         await sleep(staggerDelayMs(entry, i));
       }
-      await processDueChannel(entry, pkg, Date.now());
+      await processDueChannel(entry, pkg, new Date());
     }
   } finally {
     tickInFlight = false;
