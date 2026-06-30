@@ -17,13 +17,19 @@ import {
   MessageComponentTypes,
   verifyKeyMiddleware,
 } from 'discord-interactions';
-import { scheduleColors, truncate, buildSupporterEmbed, buildSupporterComponents, buildSupporterEventEmbed, buildSkillEmbed, buildSkillComponents, getColor, getCustomEmoji, parseEmojiForDropdown, buildEventEmbed, buildUmaEmbed, buildUmaComponents, buildRaceEmbed, buildCMEmbed, capitalize, buildResourceEmbed, buildEpithetEmbed, buildEpithetListPayload, EPITHET_PAGINATION_ID_PREFIX, DiscordRequest } from './utils.js';
+import { scheduleColors, truncate, buildSupporterEmbed, buildSupporterComponents, buildSupporterEventEmbed, buildSkillEmbed, buildSkillComponents, parseSkillNavCustomId, getColor, getCustomEmoji, parseEmojiForDropdown, buildEventEmbed, buildUmaEmbed, buildUmaComponents, buildRaceEmbed, buildCMEmbed, buildMapEmbed, capitalize, buildResourceEmbed, buildEpithetEmbed, buildEpithetListPayload, EPITHET_PAGINATION_ID_PREFIX, DiscordRequest } from './utils.js';
 import cache, { updateCache } from './githubCache.js';
 import { renderCourseMapPng } from './courseMapRenderer.js';
 import {
   getUpcomingChampionsMeet,
   getSelectableChampionsMeets,
   getCourseMapDataFromCm,
+  getCourseMapDataFromMap,
+  resolveMapOverride,
+  resolveMapSource,
+  buildMapOverrideAutocompleteChoices,
+  resolveMapCatalogMatches,
+  buildMapCatalogAutocompleteChoices,
   resolveSkillActivationOverlay,
   buildSkillMapCacheKey,
   ensureDirectory,
@@ -32,6 +38,7 @@ import {
 import {
   buildLeaderboardAutocompleteChoices,
   buildRegisteredClubAutocompleteChoices,
+  buildTargetTierAutocompleteChoices,
   dispatchClubCommand,
   handleClubComponent,
   isClubCommand,
@@ -42,13 +49,11 @@ import { getUmaApiKey } from './clubService.js';
 import { startLeaderboardCron } from './clubLeaderboardCron.js';
 import {
   dispatchQuizCommand,
-  ensureQuizGuildSetup,
   handleQuizAnswer,
   handleQuizAnswerComponent,
   isQuizCommand,
 } from './quizHandlers.js';
 import {
-  buildGiveAutocompleteChoices,
   dispatchGambacoinCommand,
   handleGambaDonateClick,
   handleGambaDonateComponent,
@@ -68,6 +73,7 @@ import {
 import { startEventCron } from './eventCron.js';
 import { reloadEventsFromDisk } from './eventService.js';
 import { resumeActiveQuizzes } from './quizRunner.js';
+import { startQuizRemoteSync } from './quizStorage.js';
 
 import path from 'path';
 import { fileURLToPath } from "url";
@@ -176,63 +182,97 @@ function composeSkillComponents(baseComponents, mapComponents) {
   ];
 }
 
+function normalizeSkillMapOptions(options) {
+  if (options == null) return {};
+  if (typeof options === 'number') return { selectedCmNumber: options };
+  return options;
+}
+
+function skillMapFilePrefix(mapContextKey) {
+  return String(mapContextKey ?? 'map').replace(/[^a-zA-Z0-9._-]+/g, '-');
+}
+
 // Returns { embed, mapComponents } where mapComponents holds the optional
 // Champions Meet selector row. selectedCmNumber forces a specific CM map.
-async function buildSkillEmbedWithMap(skill, supporterList, req, selectedCmNumber = null) {
+// mapOverride resolves a catalog/custom-race map instead of the CM default.
+async function buildSkillEmbedWithMap(skill, supporterList, req, options = {}) {
+  const { selectedCmNumber = null, mapOverride = null } = normalizeSkillMapOptions(options);
   const embed = buildSkillEmbed(skill, supporterList);
-  const result = { embed, mapComponents: [] };
+  const result = { embed, mapComponents: [], mapOverrideKey: null, mapCid: null };
 
-  const upcomingCm = getUpcomingChampionsMeet(champsmeets);
-  const upcomingCmNumber = Number(upcomingCm?.number);
-  const effectiveMinCmNumber = Number.isFinite(upcomingCmNumber)
-    ? Math.max(SKILL_MAP_MIN_CM_NUMBER, upcomingCmNumber)
-    : SKILL_MAP_MIN_CM_NUMBER;
+  const override = mapOverride
+    ? resolveMapOverride(mapOverride, cache.maps, cache.customraces)
+    : null;
+  if (override) result.mapOverrideKey = override.key;
+  let mapData = null;
+  let overlayCm = null;
+  let mapLabel = null;
+  let mapContextKey = null;
 
-  const selectableCms = getSelectableChampionsMeets(champsmeets, {
-    fromCmNumber: effectiveMinCmNumber,
-    maxCmNumber: SKILL_MAP_MAX_CM_NUMBER,
-  });
-  if (selectableCms.length === 0) return result;
+  if (override) {
+    mapData = getCourseMapDataFromMap(override.rawMap, override.context);
+    overlayCm = override.context;
+    mapLabel = override.label;
+    mapContextKey = override.key;
+    result.mapCid = override.rawMap?.cid ?? null;
+  } else {
+    const upcomingCm = getUpcomingChampionsMeet(champsmeets);
+    const upcomingCmNumber = Number(upcomingCm?.number);
+    const effectiveMinCmNumber = Number.isFinite(upcomingCmNumber)
+      ? Math.max(SKILL_MAP_MIN_CM_NUMBER, upcomingCmNumber)
+      : SKILL_MAP_MIN_CM_NUMBER;
 
-  // Resolve which CM to display: an explicit selection wins, otherwise the
-  // current upcoming CM (if it's selectable), otherwise the first selectable.
-  let activeCm = null;
-  if (selectedCmNumber != null) {
-    activeCm = selectableCms.find((cm) => Number(cm.number) === Number(selectedCmNumber)) ?? null;
+    const selectableCms = getSelectableChampionsMeets(champsmeets, {
+      fromCmNumber: effectiveMinCmNumber,
+      maxCmNumber: SKILL_MAP_MAX_CM_NUMBER,
+      mapsCatalog: cache.maps,
+    });
+    if (selectableCms.length === 0) return result;
+
+    let activeCm = null;
+    if (selectedCmNumber != null) {
+      activeCm = selectableCms.find((cm) => Number(cm.number) === Number(selectedCmNumber)) ?? null;
+    }
+    if (!activeCm) {
+      activeCm =
+        (upcomingCm && selectableCms.find((cm) => Number(cm.number) === Number(upcomingCm.number))) ||
+        selectableCms[0];
+    }
+
+    mapData = getCourseMapDataFromCm(activeCm, cache.maps);
+    overlayCm = activeCm;
+    mapLabel = activeCm.name;
+    mapContextKey = `cm:${activeCm.number}`;
+    result._selectableCms = selectableCms;
+    result._activeCm = activeCm;
+    result.mapCid = resolveMapSource(activeCm, cache.maps)?.cid ?? null;
   }
-  if (!activeCm) {
-    activeCm =
-      (upcomingCm && selectableCms.find((cm) => Number(cm.number) === Number(upcomingCm.number))) ||
-      selectableCms[0];
-  }
 
-  const mapData = getCourseMapDataFromCm(activeCm);
   if (!mapData) return result;
 
-  const overlay = resolveSkillActivationOverlay(skill, activeCm, mapData);
+  const overlay = resolveSkillActivationOverlay(skill, overlayCm, mapData);
 
-  // Skills explicitly configured to show a chart keep the CM switcher even on a
-  // CM that produces no overlay, so the user can switch back to a working CM.
   const chartCapable =
     skill.activation_map?.show_chart === true ||
     (Array.isArray(skill.activation_map?.triggers) && skill.activation_map.triggers.length > 0);
 
   if (!overlay.shouldShowChart) {
-    if (chartCapable) {
-      const dropdownRow = buildSkillCmDropdownRow(skill, selectableCms, activeCm.number);
+    if (!override && chartCapable && result._selectableCms && result._activeCm) {
+      const dropdownRow = buildSkillCmDropdownRow(skill, result._selectableCms, result._activeCm.number);
       if (dropdownRow) result.mapComponents.push(dropdownRow);
     }
     return result;
   }
 
   const cacheKey = buildSkillMapCacheKey({
-    cmNumber: activeCm.number,
+    cmNumber: overlayCm?.number,
+    mapContextKey,
     skillId: skill.gametora_id ?? skill.skill_name,
     mapData,
     markers: overlay.markers,
     rendererVersion: MAP_RENDERER_CACHE_VERSION,
   });
-  const fileName = `cm${activeCm.number}-${cacheKey}.png`;
+  const fileName = `${skillMapFilePrefix(mapContextKey)}-${cacheKey}.png`;
   const outputPath = resolveSkillMapOutputPath(PROJECT_ROOT, fileName);
   if (!fs.existsSync(outputPath)) {
     await ensureDirectory(path.dirname(outputPath));
@@ -249,19 +289,21 @@ async function buildSkillEmbedWithMap(skill, supporterList, req, selectedCmNumbe
     embed.image = { url: `${baseUrl}/assets/generated/skill-maps/${fileName}` };
   }
 
-  const suffix = `Map overlay: ${activeCm.name} • Report any errors using /bugreport`;
+  const suffix = `Map overlay: ${mapLabel} • Report any errors using /bugreport`;
   embed.footer = embed.footer?.text
     ? { text: `${embed.footer.text} • ${suffix}` }
     : { text: suffix };
 
-  const dropdownRow = buildSkillCmDropdownRow(skill, selectableCms, activeCm.number);
-  if (dropdownRow) result.mapComponents.push(dropdownRow);
+  if (!override && result._selectableCms && result._activeCm) {
+    const dropdownRow = buildSkillCmDropdownRow(skill, result._selectableCms, result._activeCm.number);
+    if (dropdownRow) result.mapComponents.push(dropdownRow);
+  }
 
   return result;
 }
 
 async function resolveCmMapImageUrl(cm, req) {
-  const mapData = getCourseMapDataFromCm(cm);
+  const mapData = getCourseMapDataFromCm(cm, cache.maps);
   if (!mapData) return null;
 
   const cacheKey = buildSkillMapCacheKey({
@@ -285,6 +327,38 @@ async function resolveCmMapImageUrl(cm, req) {
   const baseUrl = getRequestBaseUrl(req);
   if (!baseUrl) return null;
   return `${baseUrl}/assets/generated/skill-maps/${fileName}`;
+}
+
+async function resolveCatalogMapImageUrl(resolved, req) {
+  const mapData = getCourseMapDataFromMap(resolved.rawMap, resolved.context);
+  if (!mapData) return null;
+
+  const cacheKey = buildSkillMapCacheKey({
+    mapContextKey: resolved.key,
+    skillId: "catalog-map",
+    mapData,
+    markers: [],
+    rendererVersion: MAP_RENDERER_CACHE_VERSION,
+  });
+  const fileName = `${skillMapFilePrefix(resolved.key)}-${cacheKey}.png`;
+  const outputPath = resolveSkillMapOutputPath(PROJECT_ROOT, fileName);
+  if (!fs.existsSync(outputPath)) {
+    await ensureDirectory(path.dirname(outputPath));
+    await renderCourseMapPng(mapData, outputPath, {
+      width: 1500,
+      height: 360,
+      skillMarkers: [],
+    });
+  }
+
+  const baseUrl = getRequestBaseUrl(req);
+  if (!baseUrl) return null;
+  return `${baseUrl}/assets/generated/skill-maps/${fileName}`;
+}
+
+async function buildMapLookupPayload(resolved, req) {
+  const imageUrl = await resolveCatalogMapImageUrl(resolved, req);
+  return buildMapEmbed(resolved, imageUrl);
 }
 
 // Bug report destination (overridable via env)
@@ -372,7 +446,7 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
       const choices =
         focus.subcommand === 'leaderboard'
           ? buildLeaderboardAutocompleteChoices(req.body.guild_id, focus.value)
-          : focus.subcommand === 'setleaderboardchannel'
+          : focus.subcommand === 'setleaderboardchannel' || focus.subcommand === 'settarget'
             ? buildRegisteredClubAutocompleteChoices(req.body.guild_id, focus.value)
             : [];
 
@@ -382,8 +456,8 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
       });
     }
 
-    if (data.name === 'gambacoin' && focus.optionName === 'player') {
-      const choices = buildGiveAutocompleteChoices(req.body.guild_id, focus.value);
+    if (data.name === 'club' && focus.optionName === 'target' && focus.subcommand === 'settarget') {
+      const choices = await buildTargetTierAutocompleteChoices(focus.value);
       return res.send({
         type: InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT,
         data: { choices },
@@ -392,6 +466,22 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
 
     if (data.name === 'gamba' && focus.optionName === 'name') {
       const choices = buildEventAutocomplete(focus.value);
+      return res.send({
+        type: InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT,
+        data: { choices },
+      });
+    }
+
+    if (data.name === 'map' && focus.optionName === 'name') {
+      const choices = buildMapCatalogAutocompleteChoices(focus.value, cache.maps, cache.customraces);
+      return res.send({
+        type: InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT,
+        data: { choices },
+      });
+    }
+
+    if (data.name === 'skill' && focus.optionName === 'map_override') {
+      const choices = buildMapOverrideAutocompleteChoices(focus.value, cache.maps, cache.customraces);
       return res.send({
         type: InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT,
         data: { choices },
@@ -449,10 +539,6 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
   if (type === InteractionType.APPLICATION_COMMAND) {
     const { name, options } = data;
     const invokingUserId = req.body.member?.user?.id || req.body.user?.id;
-
-    if (req.body.guild_id) {
-      ensureQuizGuildSetup(req.body.guild_id);
-    }
 
     if (name === 'refreshcache') {
       if (!invokingUserId || !BOT_OWNER_IDS.has(invokingUserId)) {
@@ -555,6 +641,7 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
     // "skill" command
     if (name === 'skill') {
       const skillQuery = data.options?.find(opt => opt.name === 'name')?.value?.toLowerCase();
+      const mapOverride = data.options?.find(opt => opt.name === 'map_override')?.value ?? null;
       const query = skillQuery.toLowerCase().split(/\s+/); 
 
       // Find the skills that match
@@ -587,14 +674,19 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
         // Creating components if the skill has cards or upgraded version
         let components = [];
 
-        const { embed: skillEmbed, mapComponents } = await buildSkillEmbedWithMap(matches[0], supporterList, req);
+        const { embed: skillEmbed, mapComponents, mapOverrideKey, mapCid } = await buildSkillEmbedWithMap(
+          matches[0],
+          supporterList,
+          req,
+          { mapOverride }
+        );
 
         return res.send({
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
         data: { 
           embeds: [skillEmbed],
           components: composeSkillComponents(
-            buildSkillComponents(matches[0], supporterMatches.length, supporterMatches),
+            buildSkillComponents(matches[0], supporterMatches.length, supporterMatches, mapOverrideKey, mapCid),
             mapComponents
           )
         }
@@ -617,7 +709,7 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
                   placeholder: "Choose a Skill",
                   options: matches.slice(0, 25).map(s => ({
                     label:  s.skill_name , // must be <=100 chars
-                    value: s.skill_name, // send the skill title back on select
+                    value: mapOverride ? `${s.skill_name}::${mapOverride}` : s.skill_name,
                     description: s.description.length > 80 
                       ? s.description.slice(0, 77) + "..." 
                       : s.description,
@@ -761,6 +853,50 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
             }
           ]
         }
+      });
+    }
+
+    // "map" command
+    if (name === 'map') {
+      const mapQuery = data.options?.find((opt) => opt.name === 'name')?.value ?? '';
+      const matches = resolveMapCatalogMatches(mapQuery, cache.maps, cache.customraces);
+
+      if (matches.length === 0) {
+        return res.send({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: { content: `❌ Course map "${mapQuery}" not found.` },
+        });
+      }
+
+      if (matches.length === 1) {
+        const mapPayload = await buildMapLookupPayload(matches[0], req);
+        return res.send({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: mapPayload,
+        });
+      }
+
+      return res.send({
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: {
+          content: `🔎 Found ${matches.length} matches. Pick one:`,
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 3,
+                  custom_id: 'map_select',
+                  placeholder: 'Choose a course map',
+                  options: matches.slice(0, 25).map((entry) => ({
+                    label: entry.label.length > 100 ? `${entry.label.slice(0, 97)}...` : entry.label,
+                    value: entry.key,
+                  })),
+                },
+              ],
+            },
+          ],
+        },
       });
     }
 
@@ -1304,10 +1440,6 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
   if (type === InteractionType.MESSAGE_COMPONENT) {
     const { custom_id, values } = data;
 
-    if (req.body.guild_id) {
-      ensureQuizGuildSetup(req.body.guild_id);
-    }
-
     const quizAnswer = handleQuizAnswerComponent(custom_id);
     if (quizAnswer) {
       try {
@@ -1395,7 +1527,9 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
       }
 
       try {
-        const componentData = await runClubComponentAction(clubAction);
+        const componentData = await runClubComponentAction(clubAction, {
+          guildId: req.body.guild_id ?? null,
+        });
         return res.send({
           type: InteractionResponseType.UPDATE_MESSAGE,
           data: componentData,
@@ -1457,7 +1591,7 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
         ? supporterMatches.map(s => `• ${s.character_name} - ${s.card_name} (${s.rarity.toUpperCase()})`).join('\n')
         : 'None';
 
-      const { embed: skillEmbed } = await buildSkillEmbedWithMap(skill, supporterList, req);
+      const { embed: skillEmbed, mapCid } = await buildSkillEmbedWithMap(skill, supporterList, req);
       return res.send({
         type: InteractionResponseType.UPDATE_MESSAGE,
         data: {
@@ -1465,7 +1599,7 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
           embeds: [buildSupporterEmbed(supporter, skills, level), skillEmbed],
           components: [
             ...buildSupporterComponents(supporter, level),
-            ...buildSkillComponents(skill, false, supporterMatches)
+            ...buildSkillComponents(skill, false, supporterMatches, null, mapCid)
           ]
         }
       });
@@ -1502,10 +1636,16 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
 
     // Handling selecting a skill from a dropdown
     if (custom_id === "skill_select") {
-      const selectedTitle = values[0].toLowerCase();
+      const [selectedTitle, selectedMapOverride] = String(values[0] ?? "").split("::");
       const skill = skills.find(s =>
-        s.skill_name.toLowerCase() === selectedTitle
+        s.skill_name.toLowerCase() === selectedTitle.toLowerCase()
       );
+      if (!skill) {
+        return res.send({
+          type: InteractionResponseType.UPDATE_MESSAGE,
+          data: { content: "❌ Could not find the selected skill." }
+        });
+      }
 
       // Lookup supporters with this skill
       const supporterMatches = getSupporterMatchesForSkill(skill.skill_name);
@@ -1516,7 +1656,12 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
         : 'None';
 
         
-      const { embed: skillEmbed, mapComponents } = await buildSkillEmbedWithMap(skill, supporterList, req);
+      const { embed: skillEmbed, mapComponents, mapOverrideKey, mapCid } = await buildSkillEmbedWithMap(
+        skill,
+        supporterList,
+        req,
+        { mapOverride: selectedMapOverride || null }
+      );
 
       return res.send({
         type: InteractionResponseType.UPDATE_MESSAGE,
@@ -1524,7 +1669,7 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
           content: `✅ You selected **${skill.skill_name}**`,
           embeds: [skillEmbed],
           components: composeSkillComponents(
-            buildSkillComponents(skill, supporterMatches.length, supporterMatches),
+            buildSkillComponents(skill, supporterMatches.length, supporterMatches, mapOverrideKey, mapCid),
             mapComponents
           )
         }
@@ -1552,7 +1697,7 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
         ? supporterMatches.map(s => `• ${s.character_name} - ${s.card_name} (${s.rarity.toUpperCase()})`).join('\n')
         : 'None';
 
-      const { embed: skillEmbed, mapComponents } = await buildSkillEmbedWithMap(skill, supporterList, req, selectedCmNumber);
+      const { embed: skillEmbed, mapComponents, mapCid } = await buildSkillEmbedWithMap(skill, supporterList, req, selectedCmNumber);
 
       return res.send({
         type: InteractionResponseType.UPDATE_MESSAGE,
@@ -1560,7 +1705,7 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
           content: `✅ You selected **${skill.skill_name}**`,
           embeds: [skillEmbed],
           components: composeSkillComponents(
-            buildSkillComponents(skill, supporterMatches.length, supporterMatches),
+            buildSkillComponents(skill, supporterMatches.length, supporterMatches, null, mapCid),
             mapComponents
           )
         }
@@ -1580,70 +1725,44 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
           });
     }
 
-    // Handling looking up the upgraded skill
-    if (custom_id.startsWith("upgrade_")) {
-      const upgradedName = custom_id.replace("upgrade_", "").toLowerCase();
-      const upgradedSkill = skills.find(s =>
-        s.skill_name.toLowerCase() === upgradedName
-      );
-
-      if (!upgradedSkill) {
+    // Handling looking up the upgraded/downgraded skill
+    if (custom_id.startsWith("upgrade_") || custom_id.startsWith("downgrade_")) {
+      const parsed = parseSkillNavCustomId(custom_id);
+      if (!parsed) {
         return res.send({
           type: InteractionResponseType.UPDATE_MESSAGE,
-          data: { content: "⚠️ Upgraded skill not found!" }
+          data: { content: "⚠️ Could not parse skill navigation button." }
         });
       }
 
-      // Lookup supporters with this skill
-      const supporterMatches = getSupporterMatchesForSkill(upgradedSkill.skill_name);
+      const targetSkill = skills.find(s =>
+        s.skill_name.toLowerCase() === parsed.targetName.toLowerCase()
+      );
 
-      // Format supporter names into a list
-      let supporterList = supporterMatches.length
+      if (!targetSkill) {
+        return res.send({
+          type: InteractionResponseType.UPDATE_MESSAGE,
+          data: { content: `⚠️ ${parsed.kind === "upgrade" ? "Upgraded" : "Downgraded"} skill not found!` }
+        });
+      }
+
+      const supporterMatches = getSupporterMatchesForSkill(targetSkill.skill_name);
+      const supporterList = supporterMatches.length
         ? supporterMatches.map(s => `• ${s.character_name} - ${s.card_name} (${s.rarity.toUpperCase()})`).join('\n')
         : 'None';
 
-      const { embed: skillEmbed, mapComponents } = await buildSkillEmbedWithMap(upgradedSkill, supporterList, req);
+      const { embed: skillEmbed, mapComponents, mapOverrideKey, mapCid } = await buildSkillEmbedWithMap(
+        targetSkill,
+        supporterList,
+        req,
+        { mapOverride: parsed.mapOverrideKey }
+      );
       return res.send({
         type: InteractionResponseType.UPDATE_MESSAGE,
         data: {
           embeds: [skillEmbed],
           components: composeSkillComponents(
-            buildSkillComponents(upgradedSkill, supporterMatches.length, supporterMatches),
-            mapComponents
-          )
-        }
-      });
-    }
-
-    // Handling looking up the downgraded skill
-    if (custom_id.startsWith("downgrade_")) {
-      const downgradedName = custom_id.replace("downgrade_", "").toLowerCase();
-      const downgradedSkill = skills.find(s =>
-        s.skill_name.toLowerCase() === downgradedName
-      );
-
-      if (!downgradedSkill) {
-        return res.send({
-          type: InteractionResponseType.UPDATE_MESSAGE,
-          data: { content: "⚠️ Downgraded skill not found!" }
-        });
-      }
-
-      // Lookup supporters with this skill
-      const supporterMatches = getSupporterMatchesForSkill(downgradedSkill.skill_name);
-
-      // Format supporter names into a list
-      let supporterList = supporterMatches.length
-        ? supporterMatches.map(s => `• ${s.character_name} - ${s.card_name} (${s.rarity.toUpperCase()})`).join('\n')
-        : 'None';
-
-      const { embed: skillEmbed, mapComponents } = await buildSkillEmbedWithMap(downgradedSkill, supporterList, req);
-      return res.send({
-        type: InteractionResponseType.UPDATE_MESSAGE,
-        data: {
-          embeds: [skillEmbed],
-          components: composeSkillComponents(
-            buildSkillComponents(downgradedSkill, supporterMatches.length, supporterMatches),
+            buildSkillComponents(targetSkill, supporterMatches.length, supporterMatches, mapOverrideKey, mapCid),
             mapComponents
           )
         }
@@ -1712,7 +1831,7 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
           ).join('\n')
         : 'None';
 
-      const { embed: skillEmbed } = await buildSkillEmbedWithMap(skill, supporterList, req);
+      const { embed: skillEmbed, mapCid } = await buildSkillEmbedWithMap(skill, supporterList, req);
       return res.send({
         type: InteractionResponseType.UPDATE_MESSAGE,
         data: {
@@ -1720,7 +1839,7 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
           embeds: [buildUmaEmbed(uma, skills), skillEmbed],
           components: [
             ...buildUmaComponents(uma, true, characters),
-            ...buildSkillComponents(skill, supporterMatches.length, supporterMatches)
+            ...buildSkillComponents(skill, supporterMatches.length, supporterMatches, null, mapCid)
           ]
         }
       });
@@ -1757,6 +1876,28 @@ app.post('/interactions', verifyKeyMiddleware(PUBLIC_KEY), async function (req, 
           embeds: [buildRaceEmbed(race, characters)],
           components: [] // remove the dropdown after selection
         }
+      });
+    }
+
+    if (custom_id === "map_select") {
+      const selectedKey = values[0];
+      const resolved = resolveMapOverride(selectedKey, cache.maps, cache.customraces);
+
+      if (!resolved) {
+        return res.send({
+          type: InteractionResponseType.UPDATE_MESSAGE,
+          data: { content: "❌ Course map not found." },
+        });
+      }
+
+      const mapPayload = await buildMapLookupPayload(resolved, req);
+      return res.send({
+        type: InteractionResponseType.UPDATE_MESSAGE,
+        data: {
+          content: `✅ You selected **${resolved.label}**`,
+          ...mapPayload,
+          components: [],
+        },
       });
     }
 
@@ -1947,6 +2088,7 @@ app.listen(PORT, () => {
   } else {
     console.warn('UMA_API_KEY is missing — /register, /profile, and club leaderboards will fail until it is set.');
   }
+  startQuizRemoteSync();
   resumeActiveQuizzes().catch((err) => {
     console.error('Failed to resume active quizzes:', err.message);
   });

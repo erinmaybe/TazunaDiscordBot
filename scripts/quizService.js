@@ -4,6 +4,7 @@ import { resolveMcqAnswers } from './quizLists.js';
 
 export const DEFAULT_ROUND_SECONDS = 10;
 export const AUDIO_ROUND_BONUS_SECONDS = 5;
+export const IMAGE_ROUND_BONUS_SECONDS = 5;
 export const MIN_ROUND_SECONDS = 10;
 export const MAX_ROUND_SECONDS = 30;
 export const DEFAULT_SCORE_GOAL = 15;
@@ -16,17 +17,20 @@ export const QUIZ_WIN_BASE_COINS = 10;
 export const QUIZ_WIN_COINS_PER_PARTICIPANT = 5;
 export const QUIZ_WIN_MAX_COINS = 50;
 export const EMPTY_ROUND_LIMIT = 3;
+export const UMASTAN_GAMER_POOL_WEIGHT = 0.6;
 
 export const QUIZ_GAMEMODES = {
-  gamer: ['umas', 'skills', 'supporters'],
+  gamer: ['umas', 'gamedata'],
   larper: ['songs', 'keiba', 'trivia', 'umaguesser'],
   umadol: ['songs'],
   umaguesser: ['umaguesser'],
+  testing: ['testquestions'],
 };
 
 export const DEFAULT_GAMEMODE = 'umastan';
 export const DIFFICULTY_LEVELS = ['easy', 'medium', 'hard', 'expert'];
-export const DEFAULT_DIFFICULTY = 'hard';
+export const SESSION_DIFFICULTY_LEVELS = [...DIFFICULTY_LEVELS, 'default'];
+export const DEFAULT_DIFFICULTY = 'default';
 export const DEFAULT_QUESTION_DIFFICULTY = 'medium';
 export const QUIZ_MODE = 'mcq';
 export const BUTTON_LABEL_MAX = 80;
@@ -108,7 +112,13 @@ function getCategoryFooterText(question) {
 
 export function normalizeGamemode(gamemode) {
   const value = String(gamemode || '').toLowerCase();
-  if (value === 'gamer' || value === 'larper' || value === 'umadol' || value === 'umaguesser') {
+  if (
+    value === 'gamer'
+    || value === 'larper'
+    || value === 'umadol'
+    || value === 'umaguesser'
+    || value === 'testing'
+  ) {
     return value;
   }
   if (value === 'godgamer') return DEFAULT_GAMEMODE;
@@ -118,6 +128,7 @@ export function normalizeGamemode(gamemode) {
 export function getGamemodeCategories(gamemode, enabledCategories) {
   const normalized = normalizeGamemode(gamemode);
   if (normalized === DEFAULT_GAMEMODE) return [...enabledCategories];
+  if (normalized === 'testing') return ['testquestions'];
   const enabled = new Set(enabledCategories);
   return (QUIZ_GAMEMODES[normalized] || []).filter((categoryId) => enabled.has(categoryId));
 }
@@ -129,12 +140,15 @@ export function getGamemodeLabel(gamemode) {
     umadol: 'Umadol',
     umaguesser: 'Umaguesser',
     umastan: 'Umastan',
+    testing: 'TESTING - IGNORE THIS',
   };
   return labels[normalizeGamemode(gamemode)];
 }
 
 export function normalizeDifficulty(difficulty) {
-  return DIFFICULTY_LEVELS.includes(difficulty) ? difficulty : DEFAULT_DIFFICULTY;
+  const value = String(difficulty ?? '').trim().toLowerCase();
+  if (SESSION_DIFFICULTY_LEVELS.includes(value)) return value;
+  return DEFAULT_DIFFICULTY;
 }
 
 export function getDifficultyLabel(difficulty) {
@@ -143,6 +157,7 @@ export function getDifficultyLabel(difficulty) {
     medium: 'Medium',
     hard: 'Hard',
     expert: 'Expert',
+    default: 'Default',
   };
   return labels[normalizeDifficulty(difficulty)];
 }
@@ -169,13 +184,48 @@ export function getQuestionDifficulty(question) {
   return DIFFICULTY_LEVELS.includes(value) ? value : DEFAULT_QUESTION_DIFFICULTY;
 }
 
-export function rollTargetDifficulty(selectedDifficulty) {
-  const selected = normalizeDifficulty(selectedDifficulty);
-  const idx = DIFFICULTY_LEVELS.indexOf(selected);
-  const lower = DIFFICULTY_LEVELS.slice(0, idx);
-  if (!lower.length) return selected;
-  if (Math.random() < 0.6) return selected;
-  return lower[Math.floor(Math.random() * lower.length)];
+export function rollQuestionDifficulty(sessionDifficulty) {
+  const mode = normalizeDifficulty(sessionDifficulty);
+  switch (mode) {
+    case 'easy':
+      return 'easy';
+    case 'medium':
+      return Math.random() < 0.8 ? 'medium' : 'easy';
+    case 'hard':
+      return Math.random() < 0.8 ? 'hard' : 'medium';
+    case 'expert':
+      return 'expert';
+    case 'default':
+    default: {
+      const roll = Math.random();
+      if (roll < 0.4) return 'hard';
+      if (roll < 0.7) return 'medium';
+      if (roll < 0.9) return 'easy';
+      return 'expert';
+    }
+  }
+}
+
+export function buildTierTryOrder(sessionDifficulty) {
+  const mode = normalizeDifficulty(sessionDifficulty);
+  const rolled = rollQuestionDifficulty(mode);
+
+  switch (mode) {
+    case 'easy':
+      return ['easy', 'medium'];
+    case 'medium':
+      return [rolled, 'hard'];
+    case 'hard':
+      return [rolled, 'expert'];
+    case 'expert':
+      return ['expert', 'hard'];
+    case 'default': {
+      const fallbackOrder = ['hard', 'medium', 'easy', 'expert'].filter((tier) => tier !== rolled);
+      return [rolled, ...fallbackOrder];
+    }
+    default:
+      return [rolled];
+  }
 }
 
 export function matchesMediaFilters(question, { allowAudio = true, allowPicture = true } = {}) {
@@ -196,6 +246,12 @@ function pickRandomItem(items) {
   return items[Math.floor(Math.random() * items.length)];
 }
 
+function getTemplateKey(question) {
+  const category = String(question?.category || '').trim().toLowerCase();
+  const template = String(question?.promptTemplate || question?.prompt || '').trim().toLowerCase();
+  return `${category}::${template}`;
+}
+
 function countAskedTimes(questionId, usedIds) {
   let count = 0;
   for (const id of usedIds) {
@@ -204,145 +260,135 @@ function countAskedTimes(questionId, usedIds) {
   return count;
 }
 
-function buildTierTryOrder(selectedDifficulty) {
-  const tiersToTry = [];
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    tiersToTry.push(rollTargetDifficulty(selectedDifficulty));
+function countTemplateAskedTimes(templateKey, usedIds, questionById) {
+  let count = 0;
+  for (const id of usedIds) {
+    const question = questionById.get(id);
+    if (!question) continue;
+    if (getTemplateKey(question) === templateKey) count += 1;
   }
-  for (const tier of [...DIFFICULTY_LEVELS].reverse()) {
-    tiersToTry.push(tier);
-  }
-  return tiersToTry;
+  return count;
 }
 
-function getQuestionCategory(question) {
-  return question.category || 'unknown';
-}
+function applyRepeatGuards(pool, usedIds, avoidId = null) {
+  let candidates = [...pool];
+  if (!candidates.length) return candidates;
 
-function getQuestionTemplateKey(question) {
-  return String(question.promptTemplate || question.prompt || question.id || 'unknown').trim();
-}
-
-function groupQuestionsByTemplate(questions) {
-  const groups = new Map();
-  for (const question of questions) {
-    const key = `${getQuestionCategory(question)}::${getQuestionTemplateKey(question)}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(question);
-  }
-  return groups;
-}
-
-function sumAskedTimes(questions, usedIds) {
-  return questions.reduce((sum, question) => sum + countAskedTimes(question.id, usedIds), 0);
-}
-
-function pickBalancedCategoryPool(categoryPools, usedIds) {
-  const usedSet = new Set(usedIds);
-  const entries = categoryPools.map((questions) => {
-    const hasUnused = questions.some((question) => !usedSet.has(question.id));
-    return { questions, hasUnused, asked: sumAskedTimes(questions, usedIds) };
-  });
-
-  const candidates = entries.some((entry) => entry.hasUnused)
-    ? entries.filter((entry) => entry.hasUnused)
-    : entries;
-  const minAsked = Math.min(...candidates.map((entry) => entry.asked));
-  const balanced = candidates.filter((entry) => entry.asked === minAsked);
-  return pickRandomItem(balanced).questions;
-}
-
-function pickBalancedTemplatePool(pool, usedIds) {
-  const usedSet = new Set(usedIds);
-  const byTemplate = groupQuestionsByTemplate(pool);
-  const entries = [...byTemplate.values()].map((questions) => {
-    const unused = questions.filter((question) => !usedSet.has(question.id));
-    const activePool = unused.length ? unused : questions;
-    return {
-      pool: activePool,
-      hasUnused: unused.length > 0,
-      asked: sumAskedTimes(questions, usedIds),
-    };
-  });
-
-  const candidates = entries.some((entry) => entry.hasUnused)
-    ? entries.filter((entry) => entry.hasUnused)
-    : entries;
-  const minAsked = Math.min(...candidates.map((entry) => entry.asked));
-  const balanced = candidates.filter((entry) => entry.asked === minAsked);
-  return pickRandomItem(balanced).pool;
-}
-
-function pickBalancedCategoryAndTemplate(pool, usedIds) {
-  const byCategory = new Map();
-  for (const question of pool) {
-    const category = getQuestionCategory(question);
-    if (!byCategory.has(category)) byCategory.set(category, []);
-    byCategory.get(category).push(question);
+  if (avoidId && candidates.length > 1) {
+    const noImmediateRepeat = candidates.filter((question) => question.id !== avoidId);
+    if (noImmediateRepeat.length) candidates = noImmediateRepeat;
   }
 
-  const categoryPool = pickBalancedCategoryPool([...byCategory.values()], usedIds);
-  return pickBalancedTemplatePool(categoryPool, usedIds);
-}
-
-function finalizeQuestionPick(finalPool, usedIds, avoidId, hasUnusedInSession) {
-  if (!finalPool.length) return null;
-
-  let pool = finalPool;
-  if (avoidId && pool.length > 1) {
-    const withoutRepeat = pool.filter((question) => question.id !== avoidId);
-    if (withoutRepeat.length) pool = withoutRepeat;
+  const recentWindowSize = Math.max(3, Math.min(12, Math.floor(usedIds.length * 0.2)));
+  const recentIds = new Set(usedIds.slice(-recentWindowSize));
+  if (recentIds.size && candidates.length > recentIds.size) {
+    const notRecent = candidates.filter((question) => !recentIds.has(question.id));
+    if (notRecent.length) candidates = notRecent;
   }
 
-  if (avoidId && pool.length > 1 && !hasUnusedInSession) {
-    pool.sort(
-      (a, b) => countAskedTimes(a.id, usedIds) - countAskedTimes(b.id, usedIds),
-    );
-    const minTimes = countAskedTimes(pool[0].id, usedIds);
-    const leastAsked = pool.filter(
-      (question) => countAskedTimes(question.id, usedIds) === minTimes,
-    );
-    return pickRandomItem(leastAsked);
-  }
-
-  return pickRandomItem(pool);
+  return candidates;
 }
 
-function pickBalancedFromPool(pool, usedIds, avoidId = null) {
+function pickWeightedFromPool(pool, usedIds, questionById, avoidId = null) {
   if (!pool.length) return null;
 
+  const candidates = applyRepeatGuards(pool, usedIds, avoidId);
+  if (!candidates.length) return null;
+
+  const grouped = new Map();
+  for (const question of candidates) {
+    const templateKey = getTemplateKey(question);
+    if (!grouped.has(templateKey)) grouped.set(templateKey, []);
+    grouped.get(templateKey).push(question);
+  }
+  let templateGroups = [...grouped.entries()].map(([templateKey, questions]) => ({ templateKey, questions }));
+
+  const avoidTemplate = avoidId ? getTemplateKey(questionById.get(avoidId)) : null;
+  if (avoidTemplate && templateGroups.length > 1) {
+    const noImmediateTemplateRepeat = templateGroups.filter((group) => group.templateKey !== avoidTemplate);
+    if (noImmediateTemplateRepeat.length) templateGroups = noImmediateTemplateRepeat;
+  }
+
+  const minTemplateAsked = Math.min(
+    ...templateGroups.map((group) => countTemplateAskedTimes(group.templateKey, usedIds, questionById)),
+  );
+  const leastAskedTemplates = templateGroups.filter(
+    (group) => countTemplateAskedTimes(group.templateKey, usedIds, questionById) === minTemplateAsked,
+  );
+  const pickedTemplateQuestions = pickRandomItem(leastAskedTemplates).questions;
+
   const usedSet = new Set(usedIds);
-  const unused = pool.filter((question) => !usedSet.has(question.id));
-  const workingPool = unused.length ? unused : pool;
-  const templatePool = pickBalancedCategoryAndTemplate(workingPool, usedIds);
-  return finalizeQuestionPick(templatePool, usedIds, avoidId, unused.length > 0);
+  const unused = pickedTemplateQuestions.filter((question) => !usedSet.has(question.id));
+  const workingPool = unused.length ? unused : pickedTemplateQuestions;
+
+  const minAsked = Math.min(...workingPool.map((question) => countAskedTimes(question.id, usedIds)));
+  const leastAsked = workingPool.filter(
+    (question) => countAskedTimes(question.id, usedIds) === minAsked,
+  );
+  return pickRandomItem(leastAsked);
+}
+
+function pickQuestionFromPool(eligible, selectedDifficulty, usedIds) {
+  if (!eligible.length) return null;
+
+  const questionById = new Map(eligible.map((question) => [question.id, question]));
+  const avoidId = usedIds.length ? usedIds[usedIds.length - 1] : null;
+  const usedSet = new Set(usedIds);
+  const unusedEligible = eligible.filter((question) => !usedSet.has(question.id));
+  const searchPool = unusedEligible.length ? unusedEligible : eligible;
+  const tierOrder = buildTierTryOrder(selectedDifficulty);
+
+  for (const tier of tierOrder) {
+    const tierPool = searchPool.filter(
+      (question) => getQuestionDifficulty(question) === tier,
+    );
+    if (!tierPool.length) continue;
+    const picked = pickWeightedFromPool(tierPool, usedIds, questionById, avoidId);
+    if (picked) return picked;
+  }
+
+  const lastTier = tierOrder[tierOrder.length - 1];
+  const lastTierPool = searchPool.filter(
+    (question) => getQuestionDifficulty(question) === lastTier,
+  );
+  if (lastTierPool.length) {
+    return pickWeightedFromPool(lastTierPool, usedIds, questionById, avoidId);
+  }
+
+  return null;
+}
+
+function buildUmastanPickOrder(questions, enabledCategories) {
+  const enabled = new Set(enabledCategories || []);
+  const gamerCats = new Set(QUIZ_GAMEMODES.gamer.filter((categoryId) => enabled.has(categoryId)));
+  const larperCats = new Set(QUIZ_GAMEMODES.larper.filter((categoryId) => enabled.has(categoryId)));
+  const gamerPool = questions.filter((question) => gamerCats.has(question.category));
+  const larperPool = questions.filter((question) => larperCats.has(question.category));
+
+  const preferGamer = Math.random() < UMASTAN_GAMER_POOL_WEIGHT;
+  const primary = preferGamer ? gamerPool : larperPool;
+  const secondary = preferGamer ? larperPool : gamerPool;
+  const order = [];
+  if (primary.length) order.push(primary);
+  if (secondary.length) order.push(secondary);
+  return order.length ? order : [questions];
 }
 
 export function pickQuestion(questions, options) {
-  const { selectedDifficulty, usedIds = [] } = options;
+  const { selectedDifficulty, usedIds = [], gamemode, enabledCategories } = options;
   const eligible = questions.filter((q) => q.type === QUIZ_MODE);
   if (!eligible.length) return null;
 
-  const avoidId = usedIds.length ? usedIds[usedIds.length - 1] : null;
-  const unusedEligible = eligible.filter((question) => !new Set(usedIds).has(question.id));
-  const searchPool = unusedEligible.length ? unusedEligible : eligible;
-  const hasUnusedInSession = unusedEligible.length > 0;
-  const tierOrder = buildTierTryOrder(selectedDifficulty);
+  const poolsToTry = normalizeGamemode(gamemode) === DEFAULT_GAMEMODE
+    ? buildUmastanPickOrder(eligible, enabledCategories)
+    : [eligible];
 
-  for (let attempt = 0; attempt < 16; attempt += 1) {
-    const templatePool = pickBalancedCategoryAndTemplate(searchPool, usedIds);
-    for (const tier of tierOrder) {
-      const tierPool = templatePool.filter(
-        (question) => getQuestionDifficulty(question) === tier,
-      );
-      if (!tierPool.length) continue;
-
-      const picked = finalizeQuestionPick(tierPool, usedIds, avoidId, hasUnusedInSession);
-      if (picked) return picked;
-    }
+  for (const pool of poolsToTry) {
+    const picked = pickQuestionFromPool(pool, selectedDifficulty, usedIds);
+    if (picked) return picked;
   }
 
-  return pickBalancedFromPool(searchPool, usedIds, avoidId);
+  return null;
 }
 
 export function getQuestionById(questions, id) {
@@ -371,9 +417,15 @@ export function isAudioQuestion(question) {
   return Boolean(question?.audioUrl);
 }
 
+export function isImageQuestion(question) {
+  return Boolean(question?.imageUrl);
+}
+
 export function getRoundSeconds(quizState, question) {
   const base = normalizeRoundSeconds(quizState?.roundSeconds);
-  const bonus = isAudioQuestion(question) ? AUDIO_ROUND_BONUS_SECONDS : 0;
+  let bonus = 0;
+  if (isAudioQuestion(question)) bonus += AUDIO_ROUND_BONUS_SECONDS;
+  if (isImageQuestion(question)) bonus += IMAGE_ROUND_BONUS_SECONDS;
   return base + bonus;
 }
 
@@ -401,13 +453,14 @@ export function createQuizState({
     roundSeconds: normalizeRoundSeconds(roundSeconds),
     scoreGoal: normalizeScoreGoal(scoreGoal),
     allowAudio: mode === 'umadol' ? true : allowAudio,
-    allowPicture: mode === 'umaguesser' ? true : allowPicture,
+    allowPicture: mode === 'umaguesser' || mode === 'testing' ? true : allowPicture,
     status: 'active',
     scores: {},
     usedQuestionIds: [],
     emptyRoundStreak: 0,
     roundCount: 0,
     pendingWinner: null,
+    goalReachCounter: 0,
     round: null,
   };
 }
@@ -465,6 +518,10 @@ export function recordResponse(quiz, userId, displayName, { correct, choiceIndex
 
   const totalPoints = quiz.scores[userId].points;
   const scoreGoal = quiz.scoreGoal ?? DEFAULT_SCORE_GOAL;
+  if (correct && totalPoints >= scoreGoal && !quiz.scores[userId].reachedGoalAt) {
+    quiz.goalReachCounter = (quiz.goalReachCounter || 0) + 1;
+    quiz.scores[userId].reachedGoalAt = quiz.goalReachCounter;
+  }
   if (correct && totalPoints >= scoreGoal) {
     if (!quiz.pendingWinner || reachedAt < quiz.pendingWinner.reachedAt) {
       quiz.pendingWinner = {
@@ -532,10 +589,19 @@ export function clearRound(quiz) {
   quiz.round = null;
 }
 
-export function getScoreboardLines(scores) {
+export function getScoreboardLines(scores, { scoreGoal = null } = {}) {
+  const goal = scoreGoal ?? DEFAULT_SCORE_GOAL;
   const entries = Object.entries(scores)
     .map(([userId, data]) => ({ userId, ...data }))
-    .sort((a, b) => b.points - a.points || a.displayName.localeCompare(b.displayName));
+    .sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points;
+      const aReached = a.points >= goal && a.reachedGoalAt;
+      const bReached = b.points >= goal && b.reachedGoalAt;
+      if (aReached && bReached) return a.reachedGoalAt - b.reachedGoalAt;
+      if (aReached) return -1;
+      if (bReached) return 1;
+      return a.displayName.localeCompare(b.displayName);
+    });
 
   if (!entries.length) return ['_No scores yet._'];
   return entries.map((entry, i) => {
@@ -579,7 +645,10 @@ function formatRoundSummary(quiz, question) {
     ...correctLines,
     ...wrongSection,
   ].join('\n');
-  const scoreboardSection = ['**Scoreboard**', ...getScoreboardLines(quiz.scores)].join('\n');
+  const scoreboardSection = [
+    '**Scoreboard**',
+    ...getScoreboardLines(quiz.scores, { scoreGoal: quiz.scoreGoal }),
+  ].join('\n');
 
   return [
     `**Round ${quiz.round.number}** — time's up!`,
@@ -634,22 +703,33 @@ export function buildDisabledMcqRows(round) {
   }];
 }
 
-export async function buildQuestionPayload(question, quiz) {
-  const embed = buildQuestionEmbed(question, quiz);
-  const payload = { embeds: [embed] };
+export function syncRoundClock(quiz, question) {
+  const roundSeconds = getRoundSeconds(quiz, question);
+  const startedAt = Date.now();
+  quiz.round.startedAt = startedAt;
+  quiz.round.endsAt = startedAt + roundSeconds * 1000;
+  quiz.round.roundSeconds = roundSeconds;
+}
+
+export async function buildQuestionMediaFiles(question, quiz) {
   const files = [];
+  const media = {
+    files,
+    embedImage: null,
+    embedImageFallback: null,
+    audioNote: null,
+    audioUrl: null,
+  };
 
   if (question.audioUrl) {
-    const clipSeconds = quiz.round?.roundSeconds ?? getRoundSeconds(quiz, question);
+    const clipSeconds = getRoundSeconds(quiz, question);
     try {
-      const audioFile = await createQuizAudioFile(question.audioUrl, clipSeconds);
-      files.push(audioFile);
-      if (!question.imageUrl) {
-        embed.description = `${embed.description}\n\n🔊 Listen to the attached audio clip.`;
-      }
+      files.push(await createQuizAudioFile(question.audioUrl, clipSeconds));
+      if (!question.imageUrl) media.audioNote = 'clip';
     } catch (err) {
       console.error('Failed to trim quiz audio, sending URL fallback:', err.message);
-      embed.description = `${embed.description}\n\n🔊 [Listen to audio](${question.audioUrl})`;
+      media.audioNote = 'link';
+      media.audioUrl = question.audioUrl;
     }
   }
 
@@ -658,19 +738,42 @@ export async function buildQuestionPayload(question, quiz) {
       try {
         const silhouette = await createSilhouetteFile(question.imageUrl);
         files.push(silhouette);
-        embed.image = { url: `attachment://${silhouette.filename}` };
+        media.embedImage = { url: `attachment://${silhouette.filename}` };
       } catch (err) {
-        console.error('Failed to create quiz silhouette, using original image:', err.message);
-        embed.image = { url: question.imageUrl };
+        console.error('Failed to create quiz silhouette, using image URL:', err.message);
+        media.embedImage = { url: question.imageUrl };
       }
     } else {
-      embed.image = { url: question.imageUrl };
+      media.embedImage = { url: question.imageUrl };
     }
   }
 
-  if (files.length) payload.files = files;
-  payload.components = buildMcqRows(quiz.guildId, quiz.round);
+  return media;
+}
+
+export function assembleQuestionPayload(question, quiz, media) {
+  const embed = buildQuestionEmbed(question, quiz);
+  if (media.audioNote === 'clip' && !question.imageUrl) {
+    embed.description = `${embed.description}\n\n🔊 Listen to the attached audio clip.`;
+  } else if (media.audioNote === 'link' && media.audioUrl) {
+    embed.description = `${embed.description}\n\n🔊 [Listen to audio](${media.audioUrl})`;
+  }
+
+  if (media.embedImage) {
+    embed.image = media.embedImage;
+  } else if (media.embedImageFallback) {
+    embed.image = { url: media.embedImageFallback };
+  }
+
+  const payload = { embeds: [embed], components: buildMcqRows(quiz.guildId, quiz.round) };
+  if (media.files.length) payload.files = media.files;
   return payload;
+}
+
+export async function buildQuestionPayload(question, quiz) {
+  const media = await buildQuestionMediaFiles(question, quiz);
+  syncRoundClock(quiz, question);
+  return assembleQuestionPayload(question, quiz, media);
 }
 
 export function buildWinnerEmbed(winner, scores, { coinReward = 0, scoreGoal = DEFAULT_SCORE_GOAL } = {}) {
@@ -680,7 +783,7 @@ export function buildWinnerEmbed(winner, scores, { coinReward = 0, scoreGoal = D
   } else {
     lines.push('', '_No coin reward — need at least 3 participants._');
   }
-  lines.push('', `**Final scoreboard** (goal: ${scoreGoal})`, ...getScoreboardLines(scores));
+  lines.push('', `**Final scoreboard** (goal: ${scoreGoal})`, ...getScoreboardLines(scores, { scoreGoal }));
 
   return {
     color: 0x57f287,
@@ -706,7 +809,11 @@ export function resolveWinnerAfterRound(quiz) {
   const leaders = Object.entries(quiz.scores)
     .map(([userId, data]) => ({ userId, ...data }))
     .filter((entry) => entry.points >= scoreGoal)
-    .sort((a, b) => b.points - a.points || a.displayName.localeCompare(b.displayName));
+    .sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points;
+      if (a.reachedGoalAt && b.reachedGoalAt) return a.reachedGoalAt - b.reachedGoalAt;
+      return a.displayName.localeCompare(b.displayName);
+    });
 
   return leaders[0] ?? null;
 }

@@ -40,6 +40,22 @@ function getOptionValue(req, name) {
   return value;
 }
 
+const QUIZ_START_TIMEOUT_MS = 90_000;
+
+async function withTimeout(task, timeoutMs, timeoutMessage) {
+  let timer = null;
+  try {
+    return await Promise.race([
+      task,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function ensureQuizGuildSetup(guildId) {
   if (!guildId) return;
   try {
@@ -59,7 +75,7 @@ export async function handleQuizStart(req) {
 
   const gamemode = getOptionValue(req, 'mode') ?? quiz.DEFAULT_GAMEMODE;
   const timer = getOptionValue(req, 'timer');
-  const difficulty = getOptionValue(req, 'difficulty') ?? quiz.DEFAULT_DIFFICULTY;
+  const difficulty = getOptionValue(req, 'difficulty');
   const scoregoal = getOptionValue(req, 'scoregoal');
   const audio = getOptionValue(req, 'audio') ?? 'yes';
   const picture = getOptionValue(req, 'picture') ?? 'yes';
@@ -69,19 +85,22 @@ export async function handleQuizStart(req) {
     ephemeral: true,
     run: async (sendFollowup) => {
       try {
-        await ensureGuildQuizRole(guildId);
-        const result = await startQuiz({
-          guildId,
-          channelId,
-          userId,
-          userName,
-          gamemode,
-          difficulty,
-          roundSeconds: timer,
-          scoreGoal: scoregoal,
-          audio,
-          picture,
-        });
+        const result = await withTimeout(
+          startQuiz({
+            guildId,
+            channelId,
+            userId,
+            userName,
+            gamemode,
+            difficulty,
+            roundSeconds: timer,
+            scoreGoal: scoregoal,
+            audio,
+            picture,
+          }),
+          QUIZ_START_TIMEOUT_MS,
+          'Quiz start timed out while preparing the first round. Please try `/quiz start` again.',
+        );
 
         if (!result.ok) {
           await sendFollowup({
@@ -91,7 +110,11 @@ export async function handleQuizStart(req) {
           return;
         }
 
-        await sendFollowup({ content: '✅ Quiz started!' });
+        await sendFollowup({
+          content: result.warning
+            ? `✅ Quiz started!\n\n${result.warning}`
+            : '✅ Quiz started!',
+        });
       } catch (err) {
         console.error('quiz start failed:', err);
         await sendFollowup({

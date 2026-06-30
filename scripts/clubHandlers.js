@@ -3,8 +3,10 @@ import {
   InteractionResponseType,
 } from 'discord-interactions';
 import {
+  buildFestProfileData,
   getGuildClubs,
   getUserLink,
+  getUserLinkByViewerId,
   isUmaLinked,
   isPremiumGuild,
   registerGuildClub,
@@ -12,6 +14,7 @@ import {
   unregisterGuildClub,
   upsertLeaderboardChannel,
   upsertUserLink,
+  setGuildClubTarget,
 } from './clubDatabase.js';
 import {
   buildAllLeaderboardPackage,
@@ -29,11 +32,16 @@ import {
   findClubsByName,
   findTrainerCandidates,
   buildLeaderboardPackage,
+  findRankThreshold,
+  formatTierRankRange,
+  getRankThresholds,
   isAllClubsLeaderboardQuery,
   isTop100Circle,
+  pickBestProfileMatch,
   resolveLeaderboardFromCircleId,
   resolveProfileFromPick,
 } from './clubService.js';
+import { hashLeaderboardContent } from './clubLeaderboardCron.js';
 import { DiscordRequest } from './utils.js';
 
 const ADMINISTRATOR = 0x8n;
@@ -80,6 +88,10 @@ export function isGuildAdmin(member) {
   } catch {
     return false;
   }
+}
+
+function isBotOwner(userId) {
+  return Boolean(userId && BOT_OWNER_IDS.has(userId));
 }
 
 function ephemeral(content) {
@@ -186,6 +198,27 @@ export function buildLeaderboardAutocompleteChoices(guildId, rawQuery) {
   return choices.slice(0, 25);
 }
 
+export async function buildTargetTierAutocompleteChoices(rawQuery) {
+  const query = rawQuery.trim().toLowerCase();
+  let tiers;
+  try {
+    tiers = await getRankThresholds();
+  } catch {
+    return [];
+  }
+
+  return tiers
+    .filter((tier) => !query || tier.tier.toLowerCase().includes(query))
+    .map((tier) => {
+      const label = formatTierRankRange(tier);
+      return {
+        name: label.slice(0, 100),
+        value: tier.tier.slice(0, 100),
+      };
+    })
+    .slice(0, 25);
+}
+
 function resolveGuildClubFromName(guildId, clubNameArg) {
   const guildClubs = getGuildClubs(guildId);
   if (!guildClubs.length) {
@@ -233,13 +266,15 @@ export function handleClubComponent(customId, values) {
   return null;
 }
 
-export async function runClubComponentAction(action) {
+export async function runClubComponentAction(action, context = {}) {
   if (action.kind === 'profile_pick') {
     const embed = await resolveProfileFromPick(action.value);
     return { embeds: [embed], components: [] };
   }
   if (action.kind === 'leaderboard_pick') {
-    const embed = await resolveLeaderboardFromCircleId(action.value);
+    const embed = await resolveLeaderboardFromCircleId(action.value, {
+      guildId: context.guildId ?? null,
+    });
     return { embeds: [embed], components: [] };
   }
   if (action.kind === 'leaderboard_all_page') {
@@ -257,8 +292,9 @@ export async function runClubComponentAction(action) {
 export async function handleRegisterClub(req) {
   const guildId = req.body.guild_id;
   if (!guildId) return guildRequiredResponse();
-  if (!isGuildAdmin(req.body.member)) {
-    return ephemeral('❌ Only server administrators can use `/club registerclub`.');
+  const userId = req.body.member?.user?.id || req.body.user?.id;
+  if (!isGuildAdmin(req.body.member) && !isBotOwner(userId)) {
+    return ephemeral('❌ Only server administrators or the bot owner can use `/club registerclub`.');
   }
 
   const circleId = String(getOptionValue(req, 'id') ?? '').trim();
@@ -380,6 +416,7 @@ export async function handleRegisterForced(req) {
           trainerName: profile.trainerName,
           circleId: profile.circleId ?? '',
           circleName: profile.circleName,
+          registeredGuildId: guildId,
         });
         const clubLine = profile.circleName
           ? ` in **${profile.circleName}**`
@@ -440,17 +477,21 @@ export async function handleProfile(req) {
           }
 
           if (candidates.length === 1) {
-            const selected = candidates[0];
+            const selected = pickBestProfileMatch(candidates) ?? candidates[0];
             const ranks = buildTrainerRanks(
               selected.circle,
               selected.members,
               selected.member.viewer_id,
+            );
+            const festa = buildFestProfileData(
+              getUserLinkByViewerId(selected.member.viewer_id),
             );
             await sendFollowup({
               embeds: [buildProfileEmbed({
                 member: selected.member,
                 circle: selected.circle,
                 ranks,
+                festa,
               })],
             });
             return;
@@ -477,8 +518,10 @@ export async function handleProfile(req) {
           return;
         }
 
-        const embed = await buildProfileEmbedForViewerId(link.viewerId, {
+        const guildClubIds = guildId ? getGuildClubs(guildId).map((club) => club.circleId) : [];
+        const { embed, resolvedCircle } = await buildProfileEmbedForViewerId(link.viewerId, {
           circleIdHint: link.circleId || undefined,
+          searchCircleIds: guildClubIds,
           festa: {
             gambaCoins: link.gambaCoins,
             gambaWr: link.gambaWr,
@@ -487,6 +530,22 @@ export async function handleProfile(req) {
             betHistory: link.betHistory,
           },
         });
+
+        if (
+          resolvedCircle?.circleId &&
+          (String(link.circleId) !== String(resolvedCircle.circleId) ||
+            link.circleName !== resolvedCircle.circleName)
+        ) {
+          upsertUserLink({
+            discordUserId: userId,
+            viewerId: link.viewerId,
+            trainerName: link.trainerName,
+            circleId: resolvedCircle.circleId,
+            circleName: resolvedCircle.circleName,
+            registeredGuildId: guildId,
+          });
+        }
+
         await sendFollowup({ embeds: [embed] });
       } catch (err) {
         console.error('profile failed:', err);
@@ -544,7 +603,7 @@ export async function handleLeaderboard(req) {
           }
 
           if (matches.length === 1) {
-            const embed = await resolveLeaderboardFromCircleId(matches[0].circleId);
+            const embed = await resolveLeaderboardFromCircleId(matches[0].circleId, { guildId });
             await sendFollowup({ embeds: [embed] });
             return;
           }
@@ -567,7 +626,7 @@ export async function handleLeaderboard(req) {
           return;
         }
 
-        const embed = await resolveLeaderboardFromCircleId(link.circleId);
+        const embed = await resolveLeaderboardFromCircleId(link.circleId, { guildId });
         await sendFollowup({ embeds: [embed] });
       } catch (err) {
         console.error('leaderboard failed:', err);
@@ -579,7 +638,7 @@ export async function handleLeaderboard(req) {
 
 function describeRefreshSchedule(guildId, circleData) {
   const top100 = isTop100Circle(circleData?.circle);
-  if (!top100) return 'daily at **00:10 JST**';
+  if (!top100) return 'hourly when **uma.moe** publishes new fan data (typically ~5 PM JST)';
   return isPremiumGuild(guildId)
     ? 'every **5 minutes** (premium server)'
     : 'every **15 minutes**';
@@ -606,7 +665,7 @@ export async function handleSetLeaderboardChannel(req) {
     ephemeral: true,
     run: async (sendFollowup) => {
       try {
-        const pkg = await buildLeaderboardPackage(circleId);
+        const pkg = await buildLeaderboardPackage(circleId, { guildId });
         const response = await DiscordRequest(`channels/${channelId}/messages`, {
           method: 'POST',
           body: { embeds: [pkg.embed] },
@@ -618,6 +677,8 @@ export async function handleSetLeaderboardChannel(req) {
           circleId,
           channelId,
           messageId: message.id,
+          circleLastUpdated: pkg.data?.circle?.last_updated ?? null,
+          embedHash: hashLeaderboardContent(pkg.embed),
         });
 
         const schedule = describeRefreshSchedule(guildId, pkg.data);
@@ -632,6 +693,65 @@ export async function handleSetLeaderboardChannel(req) {
         await sendFollowup({
           flags: InteractionResponseFlags.EPHEMERAL,
           content: `❌ Failed to set leaderboard channel: ${err.message}`,
+        });
+      }
+    },
+  };
+}
+
+export async function handleSetTarget(req) {
+  const guildId = req.body.guild_id;
+  if (!guildId) return guildRequiredResponse();
+  if (!isGuildAdmin(req.body.member)) {
+    return ephemeral('❌ Only server administrators can use `/club settarget`.');
+  }
+
+  const clubNameArg = String(getOptionValue(req, 'clubname') ?? '').trim();
+  const targetArg = String(getOptionValue(req, 'target') ?? '').trim();
+  if (!clubNameArg) return ephemeral('❌ Please provide a club name.');
+  if (!targetArg) return ephemeral('❌ Please provide a target tier.');
+
+  const resolved = resolveGuildClubFromName(guildId, clubNameArg);
+  if (resolved.error) return ephemeral(resolved.error);
+
+  return {
+    deferred: true,
+    ephemeral: true,
+    run: async (sendFollowup) => {
+      try {
+        const tiers = await getRankThresholds();
+        const threshold = findRankThreshold(tiers, targetArg);
+        if (!threshold) {
+          const valid = tiers.map((tier) => tier.tier).join(', ') || 'none loaded';
+          await sendFollowup({
+            flags: InteractionResponseFlags.EPHEMERAL,
+            content:
+              `❌ Unknown tier \`${targetArg}\`. Pick from autocomplete or use one of: ${valid}`,
+          });
+          return;
+        }
+
+        const saved = setGuildClubTarget(guildId, resolved.circleId, threshold.tier);
+        if (!saved) {
+          await sendFollowup({
+            flags: InteractionResponseFlags.EPHEMERAL,
+            content: '❌ Could not save target for that club.',
+          });
+          return;
+        }
+
+        const clubLabel = resolved.club.circleName || resolved.circleId;
+        await sendFollowup({
+          flags: InteractionResponseFlags.EPHEMERAL,
+          content:
+            `✅ Set **${clubLabel}** target to **${formatTierRankRange(threshold)}**. ` +
+            'Leaderboards for this server will show the target tier and per-member daily target.',
+        });
+      } catch (err) {
+        console.error('settarget failed:', err);
+        await sendFollowup({
+          flags: InteractionResponseFlags.EPHEMERAL,
+          content: `❌ Failed to set target: ${err.message}`,
         });
       }
     },
@@ -682,6 +802,8 @@ export function dispatchClubCommand(name, req) {
       return handleLeaderboard(req);
     case 'setleaderboardchannel':
       return handleSetLeaderboardChannel(req);
+    case 'settarget':
+      return handleSetTarget(req);
     case 'setpremium':
       return handleSetPremium(req);
     default:

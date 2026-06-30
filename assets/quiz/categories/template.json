@@ -2,8 +2,7 @@
   "name": "TemplateCategory",
   "questions": [
     {
-      "promptTemplate": "Who is {0}'s roommate?",
-      "difficulty": "medium",
+      "promptTemplate": "Who is {0}'s roommate?", "difficulty": "medium",
       "entries": [
         ["Agnes Tachyon", ["Agnes Digital", "Daiwa Scarlet", "Manhattan Cafe", "Neo Universe", "Dantsu Flame", "Jungle Pokke"]],
         ["Daiwa Scarlet", ["Vodka", "Hishi Amazon", "Biwa Hayahide", "Curren Chan", "Aston Machan", "Agnes Tachyon"], "easy"],
@@ -11,17 +10,15 @@
       ]
     },
     {
-      "promptTemplate": "Which uma stays in Ritto dorm?",
-      "difficulty": "hard",
+      "promptTemplate": "Which uma stays in Ritto dorm?", "difficulty": "hard",
       "entries": [
         ["", ["Oguri Cap", "Inari One", "Mejiro Ryan", "Sakura Chiyono O", "Mejiro Ardan"]],
         ["", ["Special Week", "El Condor Pasa", "Grass Wonder", "Maruzensky", "Seiun Sky"]]
       ]
     },
     {
-      "prompt": "Which of these umas do NOT have a dorm roommate?",
-      "answers": ["Fuji Kiseki", "Agnes Digital", "Special Week", "Admire Vega", "Air Groove"],
-      "difficulty": "hard"
+      "prompt": "Which of these umas do NOT have a dorm roommate?", "difficulty": "hard",
+      "answers": ["Fuji Kiseki", "Agnes Digital", "Special Week", "Admire Vega", "Air Groove"]
     }
   ]
 }

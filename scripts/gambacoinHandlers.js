@@ -6,11 +6,12 @@ import {
   BEG_DONATION_AMOUNTS,
   awardGambaCoins,
   ensureQuizUser,
-  findGambaPlayersByName,
+  getGambaDisplayName,
   getGambaLeaderboard,
   getUserLink,
   transferGambaCoins,
 } from './clubDatabase.js';
+import { enrichGambaLeaderboardEntries } from './clubService.js';
 import { handleGambacoinSetEventChannel } from './eventHandlers.js';
 
 const BOT_OWNER_IDS = new Set(
@@ -74,7 +75,7 @@ function buildLeaderboardEmbed(entries, { scopeLabel, totalCount }) {
 
   const lines = entries.map((entry, index) => {
     const rank = index + 1;
-    const name = entry.trainerName || 'Trainer';
+    const name = entry.displayName || getGambaDisplayName(entry);
     return `${rankLabel(rank)} **${name}** — ${formatCoins(entry.gambaCoins ?? 0)} coins`;
   });
 
@@ -114,13 +115,14 @@ export function buildBegDonationRows(beggarId) {
   ];
 }
 
-export function buildGiveAutocompleteChoices(guildId, query) {
-  const matches = findGambaPlayersByName(query, { guildId });
-  return matches.slice(0, 25).map((entry) => {
-    const name = entry.trainerName || 'Trainer';
-    const label = name.length > 100 ? `${name.slice(0, 97)}...` : name;
-    return { name: label, value: entry.discordUserId };
-  });
+function resolveDiscordDisplayName(req, userId) {
+  const resolved = req.body.data?.resolved;
+  const member = resolved?.members?.[userId];
+  if (member?.nick) return member.nick;
+  const user = resolved?.users?.[userId];
+  if (user?.global_name) return user.global_name;
+  if (user?.username) return user.username;
+  return 'Trainer';
 }
 
 function requireWallet(userId, displayName, guildId) {
@@ -136,21 +138,26 @@ export async function handleGambacoinGive(req) {
 
   const userId = req.body.member?.user?.id || req.body.user?.id;
   const displayName = req.body.member?.display_name || req.body.member?.user?.username || 'Trainer';
-  const targetUserId = getOptionValue(req, 'player');
+  const targetUserId = getOptionUserId(req, 'player');
   const amount = getOptionValue(req, 'value');
 
-  if (!targetUserId) return ephemeral('❌ Pick a player from the list.');
+  if (!targetUserId) return ephemeral('❌ Mention a player to give coins to.');
+  if (String(targetUserId) === String(userId)) {
+    return ephemeral('❌ You cannot give coins to yourself.');
+  }
   if (!amount || Number(amount) < 1) return ephemeral('❌ Enter a positive coin amount.');
 
   const wallet = requireWallet(userId, displayName, guildId);
   if (!wallet.ok) return ephemeral(wallet.error);
 
+  const recipientName = resolveDiscordDisplayName(req, targetUserId);
+  requireWallet(targetUserId, recipientName, guildId);
+
   const result = transferGambaCoins(userId, targetUserId, amount);
   if (!result.ok) return ephemeral(`❌ ${result.error}`);
 
-  const recipientName = result.recipient.trainerName || 'Trainer';
   return ephemeral(
-    `✅ Gave **${formatCoins(result.amount)}** GambaCoins to **${recipientName}**. ` +
+    `✅ Gave **${formatCoins(result.amount)}** GambaCoins to <@${targetUserId}>. ` +
       `Your balance is now **${formatCoins(result.sender.gambaCoins ?? 0)}**.`,
   );
 }
@@ -188,6 +195,7 @@ export async function handleGambacoinLeaderboard(req) {
     guildId: useGuild ? guildId : null,
     limit: 25,
   });
+  const enrichedBoard = await enrichGambaLeaderboardEntries(board);
   const totalCount = getGambaLeaderboard({
     guildId: useGuild ? guildId : null,
     limit: Number.MAX_SAFE_INTEGER,
@@ -196,7 +204,7 @@ export async function handleGambacoinLeaderboard(req) {
   return {
     type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
     data: {
-      embeds: [buildLeaderboardEmbed(board, { scopeLabel, totalCount })],
+      embeds: [buildLeaderboardEmbed(enrichedBoard, { scopeLabel, totalCount })],
     },
   };
 }

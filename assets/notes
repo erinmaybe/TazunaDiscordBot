@@ -91,7 +91,7 @@ phase>=2    "Late race and beyond"
 
                 "Any corner",                                                               corner!=0
                 "On corner 1/2/3/4",                                                        corner==1/2/3/4
-                "Any straight",                                                             corner==0
+                "Not a corner",                                                             corner==0
 
                 "Uphill",                                                                   slope==1
                 "Downhill",                                                                 slope==2
@@ -106,7 +106,7 @@ phase>=2    "Late race and beyond"
                 "Final corner and beyond",                                                  is_finalcorner==1
                 "Final corner",                                                             is_finalcorner==1 &corner!=0
                 "Random point in the final corner"                                          is_finalcorner_random==1
-                "Final straight",                                                           is_finalcorner==1 &corner==0
+                "Final non-corner",                                                           is_finalcorner==1 &corner==0
                 "Just entered final straight",                                              is_last_straight_onetime==1
                 
                 "Moved closer to the fence",                                                is_move_lane==1

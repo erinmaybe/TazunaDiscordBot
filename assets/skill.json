@@ -4741,9 +4741,6 @@
                     "type": "box",
                     "phase": "late_and_beyond",
                     "target": "zones",
-                    "labels": [
-                        "last_spurt"
-                    ],
                     "trigger_behavior": "random"
                   }
             ]
@@ -6166,7 +6163,7 @@
                 "conditions": [
                     "Medium",
                     "2nd to 5th (CM), 2nd to 7th (TT)",
-                    "Any straight",
+                    "Not a corner",
                     "Character is in their late race spurt mode"
                 ]
             }
@@ -6188,7 +6185,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "phase": "late_and_beyond",
                     "trigger_behavior": "random"
                 }
@@ -6549,7 +6546,7 @@
         "description": "Greatly consume endurance mid-race and moderately increase velocity.",
         "effect": [
             {
-                "description": "Increases target speed by 0.25 for 2.4s. Lose HP by 2%.",
+                "description": "Increases target speed by 0.25 for 2.4s. Lose HP by 4%.",
                 "conditions": [
                     "Late Surger",
                     "Random point in mid race"
@@ -6740,9 +6737,6 @@
                     "type": "box",
                     "phase": "late_and_beyond",
                     "target": "zones",
-                    "labels": [
-                        "last_spurt"
-                    ],
                     "trigger_behavior": "random"
                   }
             ]
@@ -7439,7 +7433,7 @@
                 "conditions": [
                     "Medium",
                     "2nd to 5th (CM), 2nd to 7th (TT)",
-                    "Any straight",
+                    "Not a corner",
                     "Last spurt"
                 ]
             }
@@ -7461,7 +7455,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "phase": "late_and_beyond",
                     "trigger_behavior": "random"
                 }
@@ -7511,7 +7505,7 @@
             {
                 "description": "Increases target speed by 0.35 for 5.0s.",
                 "conditions": [
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -7530,7 +7524,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -8046,7 +8040,7 @@
         "description": "Greatly consume endurance mid-race and greatly increase velocity.",
         "effect": [
             {
-                "description": "Increases target speed by 0.45 for 2.4s. Lose HP by 2%.",
+                "description": "Increases target speed by 0.45 for 2.4s. Lose HP by 4%.",
                 "conditions": [
                     "Late Surger",
                     "Random point in mid race"
@@ -8223,7 +8217,7 @@
                 "inherited": "Increases target speed by 0.25 for 3.0s.",
                 "conditions": [
                     "Precondition is true",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -8257,7 +8251,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -8421,7 +8415,7 @@
                 "conditions": [
                     "3rd to 9th (CM), 3rd to 12th (TT)",
                     "Overtake another uma",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -8443,7 +8437,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -8458,7 +8452,7 @@
                 "conditions": [
                     "1st to 2nd",
                     "≥30% HP remaining",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -8480,7 +8474,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -8568,7 +8562,7 @@
                 "conditions": [
                     "Precondition is true",
                     "1st to 5th",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -8599,7 +8593,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -8828,7 +8822,7 @@
                     "2nd to 3rd",
                     "Overtake target exists",
                     "≤1 length behind",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -8851,7 +8845,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -9022,7 +9016,7 @@
                 "conditions": [
                     "3rd to 9th (CM), 3rd to 12th (TT)",
                     "Overtake another uma",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -9044,7 +9038,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -9088,7 +9082,7 @@
         }
     },
     {   "skill_name": "Victoria por plancha ☆",
-        "description": "Hang onto the advantage when positioned toward the front with energy to spare on the final straight",
+        "description": "Hang onto the advantage when positioned toward the front with energy to spare on the final straight.",
         "effect": [
             {
                 "description": "Increases target speed by 0.25 and acceleration by 0.3 for 5.0s.",
@@ -9096,7 +9090,7 @@
                 "conditions": [
                     "1st to 2nd",
                     "≥30% HP remaining",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -9119,7 +9113,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -9170,7 +9164,7 @@
                 "inherited": "Increases target speed by 0.25 for 3.0s.",
                 "conditions": [
                     "Overtake ≥3 times since late race",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -9193,7 +9187,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -9322,7 +9316,7 @@
                     "1st to 3rd",
                     "No 'Late Start'",
                     "No 'Rushed'",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -9343,7 +9337,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -9357,7 +9351,7 @@
                 "description": "Increases target speed by 0.35 for 5.0s.",
                 "inherited": "Increases target speed by 0.15 for 3.0s.",
                 "conditions": [
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -9389,7 +9383,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -9405,7 +9399,7 @@
                 "conditions": [
                     "Precondition is true",
                     "1st to 5th",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -9437,7 +9431,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -9672,7 +9666,7 @@
                 "conditions": [
                     "1st to 2nd",
                     "≤1 length ahead",
-                    "Any straight",
+                    "Not a corner",
                     "Mid race"
                 ]
             }
@@ -9695,7 +9689,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "phase":"mid",
                     "trigger_behavior": "asap"
                 }
@@ -9851,7 +9845,7 @@
                 "inherited": "Increases target speed by 0.15 for 3.0s.",
                 "conditions": [
                     "Precondition is true",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -9885,7 +9879,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -9901,7 +9895,7 @@
                 "conditions": [
                     "3rd to 9th (CM), 4th to 12th (TT)",
                     "≤5m ahead of another uma for ≥1s",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -9924,7 +9918,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -10051,7 +10045,7 @@
                     "3rd to 9th (CM), 3rd to 12th (TT)",
                     "No 'Late Start'",
                     "No 'Rushed'",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -10071,7 +10065,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -10196,7 +10190,7 @@
                 "conditions": [
                     "2nd to 4th",
                     "≤1 length behind",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -10219,7 +10213,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -10234,7 +10228,7 @@
                 "inherited": "Increases target speed by 0.15 for 3.0s.",
                 "conditions": [
                     "Blocked at the sides for ≥2s",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -10256,7 +10250,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -10381,7 +10375,7 @@
                 "conditions": [
                     "2nd to 3rd (CM), 2nd to 4th (TT)",
                     "Be an overtake target for ≥2s",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             },
             {
@@ -10390,7 +10384,7 @@
                 "conditions": [
                     "1st to 2nd",
                     "Overtake another uma",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -10412,7 +10406,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -10536,7 +10530,7 @@
                 "conditions": [
                     "6th to 7th (CM), 8th to 9th (TT)",
                     "Overtake target exists",
-                    "Any straight",
+                    "Not a corner",
                     "Second half of the race"
                 ]
             },
@@ -10545,7 +10539,7 @@
                 "inherited": "Increases target speed by 0.15 and acceleration by 0.05 for 3.0s.",
                 "conditions": [
                     "2nd to 3rd (CM), 2nd to 4th (TT)",
-                    "Any straight",
+                    "Not a corner",
                     "Second half of the race"
                 ]
             }
@@ -10568,7 +10562,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "phase": "second_half",
                     "trigger_behavior": "asap"
                 }
@@ -10708,7 +10702,7 @@
                 "inherited": "Increases target speed by 0.25 for 2.4s. Reduces HP by 1%.",
                 "conditions": [
                     "≤1 length ahead",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -10730,7 +10724,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -10783,7 +10777,7 @@
                 "inherited": "Increases target speed by 0.15 for 3.6s.",
                 "conditions": [
                     "Overtake ≥3 times on the final corner and beyond",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -10803,7 +10797,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -10819,7 +10813,7 @@
                 "conditions": [
                     "1st to 6th (CM), 1st to 9th (TT)",
                     "≥5m behind 1st place",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             },
             {
@@ -10828,7 +10822,7 @@
                 "conditions": [
                     "7th to 9th (CM), 10th to 12th (TT)",
                     "≥5m behind 1st place",
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -10851,7 +10845,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -11037,7 +11031,7 @@
                 "inherited": "Increases target speed by 0.15 and acceleration by 0.05 for 3.0s.",
                 "conditions": [
                     "1st to 2nd",
-                    "Any straight",
+                    "Not a corner",
                     "Straight on the opposite of the audience",
                     "Late race and beyond"
                 ]
@@ -11047,7 +11041,7 @@
                 "inherited": "Increases target speed by 0.15 for 3.0s.",
                 "conditions": [
                     "1st to 2nd",
-                    "Any straight",
+                    "Not a corner",
                     "Late race and beyond"
                 ]
             }
@@ -11069,7 +11063,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "phase": "late_and_beyond",
                     "trigger_behavior": "asap"
                 }
@@ -11132,7 +11126,7 @@
                 "conditions": [
                     "Precondition is true",
                     "4th to 6th (CM), 5th to 8th (TT)",
-                    "Final straight",
+                    "Final non-corner",
                     "When ≥4th favorite"
                 ]
             },
@@ -11142,7 +11136,7 @@
                 "conditions": [
                     "Precondition is true",
                     "4th to 6th (CM), 5th to 8th (TT)",
-                    "Final straight",
+                    "Final non-corner",
                     "When ≤3rd favorite"
                 ]
             }
@@ -11174,7 +11168,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -11514,7 +11508,7 @@
                 "description": "Increases target speed by 0.35 and lane movement speed by 0.035 for 5.0s.",
                 "inherited": "Increases target speed by 0.15 and lane movement speed by 0.015 for 3.0s.",
                 "conditions": [
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -11543,7 +11537,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "trigger_behavior": "asap"
                 }
@@ -11895,7 +11889,7 @@
                 "description": "Increases acceleration by 0.2 for 0.9s.",
                 "conditions": [
                     "End Closer",
-                    "Any straight",
+                    "Not a corner",
                     "Character is in their late race spurt mode"
                 ]
             }
@@ -11919,7 +11913,7 @@
                 "type": "box",
                 "phase": "late_and_beyond",
                 "target": "layout",
-                "match": "straight",
+                "match": "not_a_corner",
                 "trigger_behavior": "asap"
               }
             ]
@@ -12605,7 +12599,7 @@
                 "description": "Increases acceleration by 0.4 for 0.9s.",
                 "conditions": [
                     "End Closer",
-                    "Any straight",
+                    "Not a corner",
                     "Character is in their late race spurt mode"
                 ]
             }
@@ -12628,7 +12622,7 @@
                 "type": "box",
                 "phase": "late_and_beyond",
                 "target": "layout",
-                "match": "straight",
+                "match": "not_a_corner",
                 "trigger_behavior": "asap"
               }
             ]
@@ -12641,7 +12635,7 @@
                 "description": "Increases acceleration by 0.4 for 3.0s.",
                 "conditions": [
                     "Sprint",
-                    "Any straight"
+                    "Random point on a random straight"
                 ]
             }
         ],
@@ -13404,7 +13398,7 @@
                 "conditions": [
                     "Precondition is true",
                     "3rd to 4th (CM), 3rd to 5th (TT)",
-                    "Final straight",
+                    "Final non-corner",
                     "Late race and beyond"
                 ]
             }
@@ -13448,7 +13442,7 @@
                 {
                     "type": "box",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "phase": "late_and_beyond",
                     "trigger_behavior": "asap"
@@ -13463,7 +13457,7 @@
                 "description": "Increases acceleration by 0.4 for 4.0s.",
                 "inherited": "Increases acceleration by 0.2 for 2.4s.",
                 "conditions": [
-                    "Final straight"
+                    "Final non-corner"
                 ]
             }
         ],
@@ -13498,7 +13492,7 @@
                 {
                     "type": "line",
                     "target": "layout",
-                    "match": "straight",
+                    "match": "not_a_corner",
                     "select": "last",
                     "line_position": "start"
                 }

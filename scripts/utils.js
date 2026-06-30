@@ -817,7 +817,32 @@ export function buildSkillEmbed(skill, supporterList) {
   };
 }
 
-export function buildSkillComponents(skill, includeDropdown = false, supporters) {
+export function appendMapOverrideToSkillNavId(baseId, mapOverrideKey) {
+  if (!mapOverrideKey) return baseId;
+  return `${baseId}::${mapOverrideKey}`;
+}
+
+export function parseSkillNavCustomId(customId) {
+  const match = String(customId ?? "").match(/^(upgrade_|downgrade_)(.+)$/);
+  if (!match) return null;
+  const rest = match[2];
+  const sep = rest.indexOf("::");
+  if (sep === -1) {
+    return { kind: match[1] === "upgrade_" ? "upgrade" : "downgrade", targetName: rest, mapOverrideKey: null };
+  }
+  return {
+    kind: match[1] === "upgrade_" ? "upgrade" : "downgrade",
+    targetName: rest.slice(0, sep),
+    mapOverrideKey: rest.slice(sep + 2) || null,
+  };
+}
+
+export function buildUmalatorSkillVisualizerUrl(cid, sid) {
+  if (!cid || !sid) return null;
+  return `https://umalator.app/umalator-global/skill-visualizer/v2/#cid=${cid},sid=${sid}`;
+}
+
+export function buildSkillComponents(skill, includeDropdown = false, supporters, mapOverrideKey = null, mapCid = null) {
   const rows = [];
   const buttonComponents = [];
 
@@ -846,7 +871,7 @@ export function buildSkillComponents(skill, includeDropdown = false, supporters)
       type: 2,
       style: 1,
       label: `Upgrade → ${skill.upgrade}`,
-      custom_id: `upgrade_${skill.upgrade}`
+      custom_id: appendMapOverrideToSkillNavId(`upgrade_${skill.upgrade}`, mapOverrideKey),
     });
   }
 
@@ -856,17 +881,17 @@ export function buildSkillComponents(skill, includeDropdown = false, supporters)
       type: 2,
       style: 1,
       label: `Downgrade → ${skill.downgrade}`,
-      custom_id: `downgrade_${skill.downgrade}`
+      custom_id: appendMapOverrideToSkillNavId(`downgrade_${skill.downgrade}`, mapOverrideKey),
     });
   }
 
-  // Skill Visualizer (link button)
-  if (skill.gametora_id) {
+  const umalatorUrl = buildUmalatorSkillVisualizerUrl(mapCid, skill.gametora_id);
+  if (umalatorUrl) {
     buttonComponents.push({
       type: 2,
       style: 5,
       label: "Umalator's Visualizer",
-      url: `https://umalator.app/umalator-global/skill-visualizer/v2/#cid=10602&sid=${skill.gametora_id}`
+      url: umalatorUrl,
     });
   }
 
@@ -1141,6 +1166,62 @@ export function buildRaceEmbed(race, charactersJSON) {
     },
     url: race.url
   };
+}
+
+export function buildMapEmbed(resolved, imageUrl = null) {
+  const map = resolved?.rawMap ?? {};
+  const customRace = resolved?.customRace ?? null;
+  const statThreshold = map.stat_treshold ?? map.stat_threshold ?? map.stat_thresholds ?? "";
+
+  const fields = [
+    { name: "Racetrack", value: String(map.racetrack ?? "—"), inline: true },
+    { name: "Distance", value: String(map.distance_meters ?? "—"), inline: true },
+    { name: "Terrain", value: String(map.terrain ?? "—"), inline: true },
+    { name: "Direction", value: String(map.direction ?? "—"), inline: true },
+  ];
+
+  if (statThreshold) {
+    fields.push({
+      name: "Stat Thresholds",
+      value: Array.isArray(statThreshold) ? statThreshold.join(" & ") : String(statThreshold),
+      inline: false,
+    });
+  }
+
+  if (customRace?.host) {
+    fields.push({ name: "Host", value: String(customRace.host), inline: true });
+  }
+
+  if (customRace?.description) {
+    fields.push({ name: "About", value: String(customRace.description), inline: false });
+  }
+
+  const track = customRace?.track;
+  if (track && [track.season, track.ground, track.weather].some(Boolean)) {
+    const conditions = [track.season, track.ground, track.weather].filter(Boolean).join("  •  ");
+    fields.push({ name: "Conditions", value: conditions, inline: false });
+  }
+
+  if (Array.isArray(map.races) && map.races.length > 0) {
+    const racesText = map.races.slice(0, 8).map((race) => `• ${race}`).join("\n");
+    fields.push({
+      name: "Races",
+      value: racesText.length > 1024 ? `${racesText.slice(0, 1021)}...` : racesText,
+      inline: false,
+    });
+  }
+
+  const embed = {
+    title: resolved?.label ?? map.name ?? "Course Map",
+    fields,
+    url: customRace?.url ?? map.url,
+  };
+
+  if (imageUrl) {
+    embed.image = { url: imageUrl };
+  }
+
+  return { embeds: [embed] };
 }
 
 export function buildCMEmbed(cm) {

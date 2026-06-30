@@ -60,6 +60,13 @@ const SKILL_COMMAND = {
       required: true,
       autocomplete: true
     },
+    {
+      type: 3,
+      name: 'map_override',
+      description: 'Show the skill chart on a different course map',
+      required: false,
+      autocomplete: true,
+    },
   ],
   type: 1,
   integration_types: [0, 1],
@@ -208,6 +215,23 @@ const CM_COMMAND = {
   type: 1,
   integration_types: [0, 1],
   contexts: [0, 1, 2],
+};
+
+const MAP_COMMAND = {
+  name: 'map',
+  description: 'Lookup a course map',
+  options: [
+    {
+      type: 3,
+      name: 'name',
+      description: 'Name of the course map',
+      required: true,
+      autocomplete: true,
+    },
+  ],
+  type: 1,
+  integration_types: [0, 1],
+  contexts: [0, 1, 2],
 }; 
 
 const REGISTER_COMMAND = {
@@ -252,7 +276,7 @@ const CLUB_COMMAND = {
     {
       type: 1,
       name: 'registerclub',
-      description: 'Link this server to an Umamusume club (admin only)',
+      description: 'Link this server to an Umamusume club (admin or bot owner)',
       options: [
         {
           type: 4,
@@ -326,6 +350,27 @@ const CLUB_COMMAND = {
     },
     {
       type: 1,
+      name: 'settarget',
+      description: 'Set the rank tier target for a registered club (admin only)',
+      options: [
+        {
+          type: 3,
+          name: 'clubname',
+          description: 'Registered club name for this server',
+          required: true,
+          autocomplete: true,
+        },
+        {
+          type: 3,
+          name: 'target',
+          description: 'Target tier (SS, S+, S, A+, etc.)',
+          required: true,
+          autocomplete: true,
+        },
+      ],
+    },
+    {
+      type: 1,
       name: 'setpremium',
       description: 'Enable or disable premium leaderboard refresh (owner only)',
       options: [
@@ -363,6 +408,7 @@ const QUIZ_COMMAND = {
             { name: 'Larper', value: 'larper' },
             { name: 'Umadol', value: 'umadol' },
             { name: 'Umaguesser', value: 'umaguesser' },
+            { name: 'TESTING - IGNORE THIS', value: 'testing' },
           ],
         },
         {
@@ -548,11 +594,10 @@ const GAMBACOIN_GIVE_SUBCOMMAND = {
   description: 'Give GambaCoins to another player',
   options: [
     {
-      type: 3,
+      type: 6,
       name: 'player',
       description: 'Player to give coins to',
       required: true,
-      autocomplete: true,
     },
     {
       type: 4,
@@ -653,6 +698,7 @@ const ALL_COMMANDS = [
   UMA_COMMAND,
   RACE_COMMAND,
   CM_COMMAND,
+  MAP_COMMAND,
   REGISTER_COMMAND,
   PROFILE_COMMAND,
   CLUB_COMMAND,

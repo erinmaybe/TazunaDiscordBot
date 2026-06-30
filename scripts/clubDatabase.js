@@ -101,11 +101,47 @@ export function getGuildClubs(guildId) {
   return clubs.map((club) => ({
     circleId: String(club.circleId),
     circleName: club.circleName ?? null,
+    targetTier: club.targetTier ?? null,
   }));
+}
+
+export function setGuildClubTarget(guildId, circleId, targetTier) {
+  const store = loadGuildClubs();
+  const key = String(guildId);
+  const clubs = Array.isArray(store[key]) ? store[key] : [];
+  const club = clubs.find((item) => String(item.circleId) === String(circleId));
+  if (!club) return false;
+
+  club.targetTier = String(targetTier).trim();
+  saveGuildClubs(store);
+  return true;
+}
+
+export function getGuildClubTarget(guildId, circleId) {
+  const clubs = getGuildClubs(guildId);
+  const club = clubs.find((item) => String(item.circleId) === String(circleId));
+  return club?.targetTier ?? null;
 }
 
 export function isGuildClubRegistered(guildId, circleId) {
   return getGuildClubs(guildId).some((club) => String(club.circleId) === String(circleId));
+}
+
+function mergeGuildIds(existingGuildIds, ...guildIds) {
+  const merged = new Set(
+    (Array.isArray(existingGuildIds) ? existingGuildIds : [])
+      .map((guildId) => String(guildId))
+      .filter(Boolean),
+  );
+  for (const guildId of guildIds) {
+    if (guildId != null && guildId !== '') merged.add(String(guildId));
+  }
+  return [...merged];
+}
+
+function trackUserGuildActivity(user, guildId) {
+  if (!user || guildId == null || guildId === '') return;
+  user.activeGuildIds = mergeGuildIds(user.activeGuildIds, guildId);
 }
 
 export const STARTING_GAMBA_COINS = 1000;
@@ -122,15 +158,21 @@ export function upsertUserLink({
   const key = String(discordUserId);
   const existing = store[key];
 
+  const registeredGid =
+    registeredGuildId != null && registeredGuildId !== ''
+      ? String(registeredGuildId)
+      : (existing?.registeredGuildId ?? null);
+
   store[key] = {
     discordUserId: key,
     viewerId: String(viewerId),
     trainerName,
+    umaTrainerName: trainerName,
     circleId: String(circleId),
     circleName: circleName ?? null,
     linkedAt: existing?.linkedAt ?? new Date().toISOString(),
-    registeredGuildId:
-      existing?.registeredGuildId ?? (registeredGuildId ? String(registeredGuildId) : null),
+    registeredGuildId: registeredGid,
+    activeGuildIds: mergeGuildIds(existing?.activeGuildIds, registeredGid),
     gambaCoins: existing?.gambaCoins ?? STARTING_GAMBA_COINS,
     gambaWr: existing?.gambaWr ?? null,
     gambaWins: existing?.gambaWins ?? 0,
@@ -163,7 +205,14 @@ function savePremiumGuildStore(store) {
   writeJson(PREMIUM_GUILDS_PATH, store);
 }
 
-export function upsertLeaderboardChannel({ guildId, circleId, channelId, messageId }) {
+export function upsertLeaderboardChannel({
+  guildId,
+  circleId,
+  channelId,
+  messageId,
+  circleLastUpdated = null,
+  embedHash = null,
+}) {
   const channels = loadLeaderboardChannels();
   const g = String(guildId);
   const c = String(circleId);
@@ -175,9 +224,10 @@ export function upsertLeaderboardChannel({ guildId, circleId, channelId, message
     circleId: c,
     channelId: String(channelId),
     messageId: String(messageId),
-    lastUpdatedAt: null,
+    lastUpdatedAt: Date.now(),
     lastDailyKey: null,
-    lastEmbedHash: null,
+    lastEmbedHash: embedHash,
+    lastCircleUpdatedAt: circleLastUpdated,
     createdAt: new Date().toISOString(),
   });
   saveLeaderboardChannels(next);
@@ -215,6 +265,7 @@ export function updateLeaderboardChannelState(guildId, circleId, patch) {
   if (patch.lastUpdatedAt !== undefined) entry.lastUpdatedAt = patch.lastUpdatedAt;
   if (patch.lastDailyKey !== undefined) entry.lastDailyKey = patch.lastDailyKey;
   if (patch.lastEmbedHash !== undefined) entry.lastEmbedHash = patch.lastEmbedHash;
+  if (patch.lastCircleUpdatedAt !== undefined) entry.lastCircleUpdatedAt = patch.lastCircleUpdatedAt;
   saveLeaderboardChannels(channels);
   return true;
 }
@@ -256,10 +307,14 @@ function normalizeUserRecord(link, discordUserId) {
     discordUserId: String(link.discordUserId ?? discordUserId),
     viewerId: link.viewerId != null && link.viewerId !== '' ? String(link.viewerId) : null,
     trainerName: link.trainerName ?? null,
+    umaTrainerName: link.umaTrainerName ?? null,
     circleId: link.circleId != null ? String(link.circleId) : '',
     circleName: link.circleName ?? null,
     linkedAt: link.linkedAt ?? null,
     registeredGuildId: link.registeredGuildId ?? null,
+    activeGuildIds: Array.isArray(link.activeGuildIds)
+      ? link.activeGuildIds.map(String)
+      : [],
     gambaCoins: link.gambaCoins ?? null,
     gambaWr: link.gambaWr ?? null,
     gambaWins: link.gambaWins ?? 0,
@@ -283,6 +338,49 @@ export function getUserLink(discordUserId) {
   return normalizeUserRecord(link, discordUserId);
 }
 
+export function getUserLinkByViewerId(viewerId) {
+  const id = String(viewerId ?? '').trim();
+  if (!id) return null;
+
+  const store = loadUserLinks();
+  for (const [discordUserId, link] of Object.entries(store)) {
+    if (String(link.viewerId) === id) {
+      return normalizeUserRecord(link, discordUserId);
+    }
+  }
+  return null;
+}
+
+export function buildFestProfileData(link) {
+  if (!link) return null;
+  return {
+    gambaCoins: link.gambaCoins,
+    gambaWr: link.gambaWr,
+    quizAccuracy: link.quizAccuracy,
+    openTickets: link.openTickets,
+    betHistory: link.betHistory,
+  };
+}
+
+export function getGambaDisplayName(entry) {
+  return entry?.umaTrainerName || entry?.trainerName || 'Trainer';
+}
+
+export function setUmaTrainerName(discordUserId, trainerName) {
+  const name = String(trainerName || '').trim();
+  if (!name) return null;
+
+  const store = loadUserLinks();
+  const key = String(discordUserId);
+  const user = store[key];
+  if (!user) return null;
+
+  user.umaTrainerName = name;
+  user.trainerName = name;
+  saveUserLinks(store);
+  return normalizeUserRecord(user, key);
+}
+
 export function ensureQuizUser(discordUserId, displayName, guildId = null) {
   const store = loadUserLinks();
   const key = String(discordUserId);
@@ -294,10 +392,12 @@ export function ensureQuizUser(discordUserId, displayName, guildId = null) {
       discordUserId: key,
       viewerId: null,
       trainerName: displayName || 'Trainer',
+      umaTrainerName: null,
       circleId: '',
       circleName: null,
       linkedAt: new Date().toISOString(),
       registeredGuildId: guildId ? String(guildId) : null,
+      activeGuildIds: mergeGuildIds([], guildId),
       gambaCoins: STARTING_GAMBA_COINS,
       gambaWr: null,
       gambaWins: 0,
@@ -309,7 +409,8 @@ export function ensureQuizUser(discordUserId, displayName, guildId = null) {
       quizAccuracy: null,
     };
   } else {
-    if (displayName) existing.trainerName = displayName;
+    trackUserGuildActivity(existing, guildId);
+    if (displayName && !isUmaLinked(existing)) existing.trainerName = displayName;
     if (guildId && !existing.registeredGuildId) existing.registeredGuildId = String(guildId);
     if (existing.quizCorrect == null) existing.quizCorrect = 0;
     if (existing.quizWrong == null) existing.quizWrong = 0;
@@ -365,25 +466,33 @@ export function hasGambaWallet(discordUserId) {
   return Boolean(getUserLink(discordUserId));
 }
 
+function matchesGambaGuildScope(entry, guildId) {
+  const gid = String(guildId);
+  if (entry.registeredGuildId === gid) return true;
+  if (entry.activeGuildIds?.includes(gid)) return true;
+
+  const circleId = entry.circleId;
+  if (!circleId) return false;
+
+  return getGuildClubs(gid).some((club) => String(club.circleId) === String(circleId));
+}
+
 export function findGambaPlayersByName(query, { guildId = null } = {}) {
   const q = String(query || '').trim().toLowerCase();
   if (!q) return [];
 
   let entries = listGambaWalletUsers();
   if (guildId) {
-    const guildEntries = entries.filter(
-      (entry) => entry.registeredGuildId === String(guildId),
-    );
-    if (guildEntries.length) entries = guildEntries;
+    entries = entries.filter((entry) => matchesGambaGuildScope(entry, guildId));
   }
 
   const exact = entries.filter(
-    (entry) => String(entry.trainerName || '').toLowerCase() === q,
+    (entry) => getGambaDisplayName(entry).toLowerCase() === q,
   );
   if (exact.length) return exact;
 
   return entries.filter((entry) =>
-    String(entry.trainerName || '').toLowerCase().includes(q),
+    getGambaDisplayName(entry).toLowerCase().includes(q),
   );
 }
 
@@ -451,14 +560,14 @@ export function awardGambaCoins(discordUserId, amount) {
 export function getGambaLeaderboard({ guildId = null, limit = 25 } = {}) {
   let entries = listGambaWalletUsers().filter((entry) => entry.gambaCoins != null);
   if (guildId) {
-    entries = entries.filter((entry) => entry.registeredGuildId === String(guildId));
+    entries = entries.filter((entry) => matchesGambaGuildScope(entry, guildId));
   }
 
   return entries
     .sort(
       (a, b) =>
         (b.gambaCoins ?? 0) - (a.gambaCoins ?? 0) ||
-        String(a.trainerName || '').localeCompare(String(b.trainerName || ''), undefined, {
+        String(getGambaDisplayName(a)).localeCompare(String(getGambaDisplayName(b)), undefined, {
           sensitivity: 'base',
         }),
     )

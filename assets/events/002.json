@@ -1,0 +1,25 @@
+{
+  "id": "002",
+  "name": "Umamusume Club Clash",
+  "type": "horse_race",
+  "status": "scheduled",
+  "startsAt": "2026-06-20T12:00:00+09:00",
+  "endsAt": "2026-06-21T23:00:00+09:00",
+  "availability": "guilds",
+  "guildIds": ["1441129742240710678", "1416320822846689333", "1461077219303620763", "1434218293916336150", "1507173883747373157"],
+  "entries": [
+    { "number": 1, "name": "Cabal Agency 2", "odds": 1.5 },
+    { "number": 2, "name": "UMAlliance 1", "odds": 1.5},
+    { "number": 3, "name": "Avalon Racing 1", "odds": 1.5},
+    { "number": 4, "name": "UMAlliance 2", "odds": 1.5 },
+    { "number": 5, "name": "Tracen Academy", "odds": 1.5 },
+    { "number": 6, "name": "Cabal Agency 1", "odds": 1.5},
+    { "number": 7, "name": "Uma Love", "odds": 1.5 },
+    { "number": 8, "name": "FALENA", "odds": 1.5 },
+    { "number": 9, "name": "BUNS", "odds": 1.5 },
+    { "number": 10, "name": "Uma Sports / Temu Gooners", "odds": 1.5 },
+    { "number": 11, "name": "Avalon Racing 2", "odds": 1.5 },
+    { "number": 12, "name": "Revolt / Usurp", "odds": 1.5 },
+    { "number": 13, "name": "Bakushin", "odds": 1.5 }
+  ]
+}

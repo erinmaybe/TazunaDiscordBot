@@ -6,6 +6,7 @@ import sharp from 'sharp';
 const SILHOUETTE_ALPHA_THRESHOLD = 24;
 const SILHOUETTE_BG_COLOR_TOLERANCE = 48;
 const SILHOUETTE_MAX_SIZE = 800;
+const QUIZ_IMAGE_FETCH_TIMEOUT_MS = 20_000;
 
 function safeUnlink(filePath) {
   try {
@@ -15,19 +16,70 @@ function safeUnlink(filePath) {
   }
 }
 
-async function downloadImage(url) {
-  const response = await fetch(url);
+const QUIZ_IMAGE_BASENAME = 'quiz-image';
+
+function imageExtensionFromUrl(url) {
+  const match = String(url).match(/\.(png|jpe?g|gif|webp|bmp)(?:[?#]|$)/i);
+  if (!match) return null;
+  return match[1].toLowerCase() === 'jpeg' ? 'jpg' : match[1].toLowerCase();
+}
+
+function mimeFromExtension(ext) {
+  const map = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    bmp: 'image/bmp',
+  };
+  return map[ext] || 'application/octet-stream';
+}
+
+function resolveImageMeta(url, contentType) {
+  const fromUrl = imageExtensionFromUrl(url);
+  if (fromUrl) {
+    return {
+      ext: fromUrl,
+      mime: mimeFromExtension(fromUrl),
+      filename: `${QUIZ_IMAGE_BASENAME}.${fromUrl}`,
+    };
+  }
+
+  const mime = contentType?.split(';')[0]?.trim();
+  if (mime?.startsWith('image/')) {
+    const subtype = mime.split('/')[1];
+    const ext = subtype === 'jpeg' ? 'jpg' : subtype;
+    return { ext, mime, filename: `${QUIZ_IMAGE_BASENAME}.${ext}` };
+  }
+
+  return { ext: 'png', mime: 'image/png', filename: `${QUIZ_IMAGE_BASENAME}.png` };
+}
+
+async function downloadImageBuffer(url) {
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(QUIZ_IMAGE_FETCH_TIMEOUT_MS),
+  });
   if (!response.ok) {
     throw new Error(`Failed to download image (${response.status})`);
   }
 
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const meta = resolveImageMeta(url, response.headers.get('content-type'));
+  return { buffer, ...meta };
+}
+
+async function downloadImage(url) {
+  const { buffer } = await downloadImageBuffer(url);
   const inputPath = path.join(
     os.tmpdir(),
     `festa-quiz-img-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
-  const buffer = Buffer.from(await response.arrayBuffer());
   fs.writeFileSync(inputPath, buffer);
   return inputPath;
+}
+
+export async function createQuizImageFile(imageUrl) {
+  return downloadImageBuffer(imageUrl);
 }
 
 function colorDistance(r1, g1, b1, r2, g2, b2) {

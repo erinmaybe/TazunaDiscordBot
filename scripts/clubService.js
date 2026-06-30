@@ -1,4 +1,5 @@
 import { buildGambleProfileFields } from './eventGambling.js';
+import { buildFestProfileData, getGuildClubTarget, getUserLinkByViewerId, setUmaTrainerName } from './clubDatabase.js';
 
 const EMPTY_FAN_STATS = {
   dailyFans: [],
@@ -154,23 +155,87 @@ export async function fetchUserProfile(accountId) {
   return normalizeUserProfile(data, id);
 }
 
+function scoreProfileMemberMatch({ circleId, member }) {
+  let score = 0;
+  if (String(member?.circle_id ?? '') === String(circleId)) score += 1e15;
+
+  const updatedMs = getMemberLastUpdatedMs(member);
+  if (updatedMs != null) score += updatedMs;
+
+  const fanStats = getMemberFanStats(member?.daily_fans ?? []);
+  if (fanStats.activeDays > 0) score += 1e10;
+
+  return score;
+}
+
+export function pickBestProfileMatch(matches) {
+  if (!matches?.length) return null;
+  if (matches.length === 1) return matches[0];
+  return [...matches].sort(
+    (a, b) => scoreProfileMemberMatch(b) - scoreProfileMemberMatch(a),
+  )[0];
+}
+
+export async function resolveProfileCircleMember(viewerId, candidateCircleIds) {
+  const target = String(viewerId);
+  const uniqueIds = [...new Set(candidateCircleIds.map(String).filter(Boolean))];
+  const matches = [];
+
+  await Promise.all(
+    uniqueIds.map(async (circleId) => {
+      try {
+        const circleData = await fetchCircleData(circleId);
+        const member = (circleData.members || []).find(
+          (m) => String(m.viewer_id) === target,
+        );
+        if (!member) return;
+        matches.push({
+          circleId,
+          circle: circleData.circle,
+          members: circleData.members || [],
+          member,
+        });
+      } catch (err) {
+        console.warn(`Could not load circle ${circleId} for profile:`, err.message);
+      }
+    }),
+  );
+
+  return pickBestProfileMatch(matches);
+}
+
 export async function buildProfileEmbedForViewerId(viewerId, options = {}) {
-  const { circleIdHint = null, festa = null } = options;
+  const { circleIdHint = null, festa = null, searchCircleIds = [] } = options;
+  const festaData = festa ?? buildFestProfileData(getUserLinkByViewerId(viewerId));
   const profile = await fetchUserProfile(viewerId);
+
+  const candidateCircleIds = [
+    profile.circleId,
+    circleIdHint,
+    ...searchCircleIds,
+  ];
+
+  const resolved = await resolveProfileCircleMember(viewerId, candidateCircleIds);
+
   let circle = profile.circle;
   let member = profile.member;
   let members = [];
+  let resolvedCircleId = profile.circleId ?? circleIdHint ?? null;
 
-  const circleId = profile.circleId ?? circleIdHint ?? null;
-  if (circleId) {
+  if (resolved) {
+    circle = resolved.circle ?? circle;
+    members = resolved.members;
+    member = resolved.member;
+    resolvedCircleId = resolved.circleId;
+  } else if (resolvedCircleId) {
     try {
-      const circleData = await fetchCircleData(circleId);
+      const circleData = await fetchCircleData(resolvedCircleId);
       circle = circleData.circle ?? circle;
       members = circleData.members || [];
       const fromCircle = members.find((m) => String(m.viewer_id) === String(viewerId));
       if (fromCircle) member = fromCircle;
     } catch (err) {
-      console.warn(`Could not refresh circle ${circleId} for profile:`, err.message);
+      console.warn(`Could not refresh circle ${resolvedCircleId} for profile:`, err.message);
     }
   }
 
@@ -183,12 +248,26 @@ export async function buildProfileEmbedForViewerId(viewerId, options = {}) {
       ? buildTrainerRanks(circle, members, viewerId)
       : {};
 
-  return buildProfileEmbed({
+  const embed = buildProfileEmbed({
     member,
-    circle: circle ?? (profile.circleName ? { name: profile.circleName, circle_id: circleId } : null),
+    circle:
+      circle ??
+      (profile.circleName
+        ? { name: profile.circleName, circle_id: resolvedCircleId }
+        : null),
     ranks,
-    festa,
+    festa: festaData,
   });
+
+  return {
+    embed,
+    resolvedCircle: circle
+      ? {
+          circleId: String(circle.circle_id ?? circle.id ?? resolvedCircleId ?? ''),
+          circleName: circle.name ?? profile.circleName ?? null,
+        }
+      : null,
+  };
 }
 
 // Monthly tracking period boundary is day 2 at 00:00 JST.
@@ -214,22 +293,143 @@ export function getDaysSinceJstMonthSecondMidnight(now = new Date()) {
   return Math.max(elapsedHours / 24, 1 / 24);
 }
 
-export async function fetchCurrentTarget(circleData) {
-  const circle = circleData?.circle;
-  if (!circle) return null;
+const RANK_THRESHOLDS_URL = 'https://uma.moe/api/v4/circles/rank-thresholds';
+const RANK_THRESHOLDS_TTL_MS = 60 * 60 * 1000;
+const TARGET_TIER_ORDER = ['SS', 'S+', 'S', 'A+', 'A', 'B+', 'B', 'C+', 'C', 'D+', 'D'];
+const CLUB_MEMBER_COUNT = 30;
+let rankThresholdsCache = { fetchedAt: 0, tiers: [] };
 
-  const rank = circle.live_rank ?? circle.monthly_rank;
-  const useLivePoints = typeof rank === 'number' ? rank <= 100 : true;
-  const page = useLivePoints ? 99 : 499;
-  const payload = await fetchUmaJson(`https://uma.moe/api/v4/circles/list?page=${page}&limit=1`);
-  const firstCircle = Array.isArray(payload?.circles) ? payload.circles[0] : null;
-  if (!firstCircle) return null;
+function normalizeRankThresholdEntry(item) {
+  if (!item || typeof item !== 'object') return null;
 
-  const totalPoints = useLivePoints ? firstCircle.live_points : firstCircle.monthly_point;
-  if (typeof totalPoints !== 'number') return null;
+  const tier = item.name ?? item.tier;
+  if (tier == null || tier === '') return null;
 
-  const daysElapsed = getDaysSinceJstMonthSecondMidnight();
-  return totalPoints / 30 / daysElapsed;
+  const rankingFrom =
+    item.ranking_from != null && Number.isFinite(Number(item.ranking_from))
+      ? Number(item.ranking_from)
+      : null;
+  const rankingTo =
+    item.ranking_to != null && Number.isFinite(Number(item.ranking_to))
+      ? Number(item.ranking_to)
+      : null;
+  const minFans =
+    item.current_min_fans != null && Number.isFinite(Number(item.current_min_fans))
+      ? Number(item.current_min_fans)
+      : null;
+  const clubFansPerDay =
+    item.current_fans_per_day != null && Number.isFinite(Number(item.current_fans_per_day))
+      ? Number(item.current_fans_per_day)
+      : null;
+
+  return {
+    tier: String(tier).trim(),
+    rankIndex: Number(item.rank_index) || 0,
+    rankingFrom,
+    rankingTo,
+    minFans,
+    clubFansPerDay,
+  };
+}
+
+export function normalizeRankThresholds(payload) {
+  const items = Array.isArray(payload)
+    ? payload
+    : payload?.thresholds ?? payload?.tiers ?? payload?.ranks ?? [];
+
+  const byTier = new Map();
+  for (const item of items) {
+    const normalized = normalizeRankThresholdEntry(item);
+    if (!normalized) continue;
+    if (!TARGET_TIER_ORDER.includes(normalized.tier)) continue;
+    byTier.set(normalized.tier.toLowerCase(), normalized);
+  }
+
+  return TARGET_TIER_ORDER.map((name) => byTier.get(name.toLowerCase())).filter(Boolean);
+}
+
+export function formatTierRankRange(threshold) {
+  if (!threshold) return '';
+  const { rankingFrom, rankingTo, tier } = threshold;
+  if (rankingFrom != null && rankingTo != null) {
+    return `${tier} (#${rankingFrom}–#${rankingTo})`;
+  }
+  if (rankingFrom != null) return `${tier} (#${rankingFrom}+)`;
+  if (rankingTo != null) return `${tier} (≤ #${rankingTo})`;
+  return tier;
+}
+
+export async function getRankThresholds() {
+  const now = Date.now();
+  if (rankThresholdsCache.tiers.length && now - rankThresholdsCache.fetchedAt < RANK_THRESHOLDS_TTL_MS) {
+    return rankThresholdsCache.tiers;
+  }
+
+  const payload = await fetchUmaJson(RANK_THRESHOLDS_URL);
+  const tiers = normalizeRankThresholds(payload);
+  rankThresholdsCache = { fetchedAt: now, tiers };
+  return tiers;
+}
+
+export function findRankThreshold(tiers, tierQuery) {
+  const query = String(tierQuery ?? '').trim().toLowerCase();
+  if (!query) return null;
+  return tiers.find((tier) => tier.tier.toLowerCase() === query) ?? null;
+}
+
+export function computeMemberDailyTarget(clubFansPerDay) {
+  if (clubFansPerDay == null || !Number.isFinite(clubFansPerDay)) return null;
+  return clubFansPerDay / CLUB_MEMBER_COUNT;
+}
+
+export async function resolveClubTargetInfo(guildId, circleId, circleData) {
+  const targetTier = getGuildClubTarget(guildId, circleId);
+  if (!targetTier) return null;
+
+  const tiers = await getRankThresholds();
+  const threshold = findRankThreshold(tiers, targetTier);
+  if (!threshold) return null;
+
+  return {
+    tierLabel: threshold.tier,
+    tierRangeLabel: formatTierRankRange(threshold),
+    rankBoundary: threshold.rankingTo,
+    dailyTarget: computeMemberDailyTarget(threshold.clubFansPerDay),
+  };
+}
+
+function buildDailyFansFromTrimmed(trimmed) {
+  let lastNegativeIdx = -1;
+  for (let i = 0; i < trimmed.length; i += 1) {
+    if (trimmed[i] < 0) lastNegativeIdx = i;
+  }
+
+  if (lastNegativeIdx < 0) {
+    const firstPositiveIdx = trimmed.findIndex((n) => n > 0);
+    if (firstPositiveIdx < 0) return [];
+    let prev = trimmed[firstPositiveIdx];
+    return trimmed.slice(firstPositiveIdx).map((n) => {
+      const v = n > 0 ? n : prev;
+      prev = v;
+      return v;
+    });
+  }
+
+  const baseline = Math.abs(trimmed[lastNegativeIdx]);
+  let startIdx = lastNegativeIdx + 1;
+  // Zeros after the last baseline are untracked days (between clubs) — skip until first real reading.
+  while (startIdx < trimmed.length && trimmed[startIdx] <= 0) startIdx += 1;
+
+  if (startIdx >= trimmed.length) return [baseline];
+
+  const dailyFans = [baseline];
+  let prev = baseline;
+  for (let i = startIdx; i < trimmed.length; i += 1) {
+    const n = trimmed[i];
+    if (n > 0) prev = n;
+    dailyFans.push(prev);
+  }
+  return dailyFans;
 }
 
 export function getMemberFanStats(rawFans) {
@@ -238,48 +438,7 @@ export function getMemberFanStats(rawFans) {
   if (lastPositiveIdx < 0) return { ...EMPTY_FAN_STATS };
 
   const trimmed = fans.slice(0, lastPositiveIdx + 1);
-
-  let lastNegativeIdx = -1;
-  let negativeCount = 0;
-  for (let i = 0; i < trimmed.length; i += 1) {
-    if (trimmed[i] < 0) {
-      lastNegativeIdx = i;
-      negativeCount += 1;
-    }
-  }
-
-  const isPreviousMonthBaselineOnly = negativeCount === 1 && lastNegativeIdx === 0;
-
-  let dailyFans;
-
-  if (lastNegativeIdx < 0) {
-    const firstPositiveIdx = trimmed.findIndex((n) => n > 0);
-    const start = firstPositiveIdx > 0 ? firstPositiveIdx : 0;
-    let prev = trimmed[start];
-    dailyFans = trimmed.slice(start).map((n) => {
-      const v = n > 0 ? n : prev;
-      prev = v;
-      return v;
-    });
-  } else if (isPreviousMonthBaselineOnly) {
-    const baseline = Math.abs(trimmed[0]);
-    let prev = baseline;
-    const rest = trimmed.slice(1).map((n) => {
-      const v = n > 0 ? n : prev;
-      prev = v;
-      return v;
-    });
-    dailyFans = [baseline, ...rest];
-  } else {
-    const baseline = Math.abs(trimmed[lastNegativeIdx]);
-    let prev = baseline;
-    const postJoin = trimmed.slice(lastNegativeIdx + 1).map((n) => {
-      const v = n > 0 ? n : prev;
-      prev = v;
-      return v;
-    });
-    dailyFans = [baseline, ...postJoin];
-  }
+  const dailyFans = buildDailyFansFromTrimmed(trimmed);
 
   if (!dailyFans.length) return { ...EMPTY_FAN_STATS };
 
@@ -536,7 +695,7 @@ export function buildProfileEmbed({ member, circle, ranks = {}, festa = null }) 
   return embed;
 }
 
-export function buildLeaderboardEmbed(data, currentTarget = null) {
+export function buildLeaderboardEmbed(data, targetInfo = null) {
   const circle = data.circle;
   const members = data.members || [];
   const cutoff = getActiveCutoffMs(members);
@@ -843,7 +1002,10 @@ export function buildLeaderboardSelectRow(clubs, circleDataById, ownerUserId) {
 export async function resolveProfileFromPick(value) {
   const [circleId, viewerId] = String(value).split('::');
   if (!viewerId) throw new Error('Invalid selection.');
-  return buildProfileEmbedForViewerId(viewerId, { circleIdHint: circleId || undefined });
+  const { embed } = await buildProfileEmbedForViewerId(viewerId, {
+    circleIdHint: circleId || undefined,
+  });
+  return embed;
 }
 
 export function isTop100Circle(circle) {
@@ -851,10 +1013,11 @@ export function isTop100Circle(circle) {
   return typeof rank === 'number' && rank > 0 && rank <= 100;
 }
 
-export async function buildLeaderboardPackage(circleId) {
+export async function buildLeaderboardPackage(circleId, options = {}) {
+  const { guildId = null } = options;
   const data = await fetchCircleData(circleId);
-  const currentTarget = await fetchCurrentTarget(data);
-  const embed = buildLeaderboardEmbed(data, currentTarget);
+  const targetInfo = guildId ? await resolveClubTargetInfo(guildId, circleId, data) : null;
+  const embed = buildLeaderboardEmbed(data, targetInfo);
   return {
     data,
     embed,
@@ -862,7 +1025,35 @@ export async function buildLeaderboardPackage(circleId) {
   };
 }
 
-export async function resolveLeaderboardFromCircleId(circleId) {
-  const pkg = await buildLeaderboardPackage(circleId);
+export async function resolveLeaderboardFromCircleId(circleId, options = {}) {
+  const pkg = await buildLeaderboardPackage(circleId, options);
   return pkg.embed;
+}
+
+export async function enrichGambaLeaderboardEntries(entries) {
+  const enriched = await Promise.all(
+    entries.map(async (entry) => {
+      if (entry.umaTrainerName) {
+        return { ...entry, displayName: entry.umaTrainerName };
+      }
+      if (!entry.viewerId) {
+        return { ...entry, displayName: entry.trainerName || 'Trainer' };
+      }
+
+      try {
+        const profile = await fetchUserProfile(entry.viewerId);
+        setUmaTrainerName(entry.discordUserId, profile.trainerName);
+        return {
+          ...entry,
+          umaTrainerName: profile.trainerName,
+          trainerName: profile.trainerName,
+          displayName: profile.trainerName,
+        };
+      } catch (err) {
+        console.warn(`Could not resolve trainer name for ${entry.viewerId}:`, err.message);
+        return { ...entry, displayName: entry.trainerName || 'Trainer' };
+      }
+    }),
+  );
+  return enriched;
 }
