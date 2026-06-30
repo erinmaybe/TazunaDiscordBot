@@ -700,6 +700,8 @@ export function buildLeaderboardEmbed(data, targetInfo = null) {
   const members = data.members || [];
   const cutoff = getActiveCutoffMs(members);
 
+  const dailyFans = circle.monthly_point - (circle.yesterday_points ?? 0);
+
   const activeMembers = members
     .filter((m) => isMemberActive(m, cutoff))
     .map((m) => {
@@ -731,20 +733,13 @@ export function buildLeaderboardEmbed(data, targetInfo = null) {
 
   const lines = [];
   const currentRank = circle.live_rank ?? circle.monthly_rank ?? '—';
-  lines.push(`**Current Rank:** # ${currentRank}`);
-  lines.push(`**Last Month's Rank:** # ${circle.last_month_rank ?? '—'}`);
-
-  if (targetInfo) {
-    lines.push(`**Target Tier:** ${targetInfo.tierRangeLabel ?? targetInfo.tierLabel}`);
-    lines.push(
-      `**Daily Target (per member):** ${
-        targetInfo.dailyTarget == null ? '—' : formatIntWithCommas(Math.round(targetInfo.dailyTarget))
-      }`,
-    );
-  } else {
-    lines.push('**Target Tier:** — *(set with `/club settarget`)*');
-    lines.push('**Daily Target (per member):** —');
-  }
+  lines.push(`**Monthly Fans:** ${circle.monthly_point.toLocaleString('en-US')}`)
+  lines.push(`**Daily Fans:** ${dailyFans.toLocaleString('en-US')}`);
+  lines.push(`**Current Rank:** #${currentRank}`);
+  /*lines.push(`**Last Month's Rank:** # ${circle.last_month_rank ?? '—'}`);
+  lines.push(
+    `**Current Target:** ${currentTarget == null ? '—' : formatIntWithCommas(Math.round(currentTarget))}`,
+  );*/
 
   if (!activeMembers.length) {
     lines.push('');

@@ -61,7 +61,7 @@ function leaderboardCacheKey(guildId, circleId) {
 async function getCachedLeaderboardPackage(circleId, guildId = null) {
   const key = leaderboardCacheKey(guildId, circleId);
   const cached = circleCache.get(key);
-  const now = Date.now();
+  const now = new Date();
   if (cached && now - cached.fetchedAt < CIRCLE_CACHE_TTL_MS) {
     return cached;
   }
@@ -186,7 +186,7 @@ export async function runLeaderboardTick() {
     const channels = getAllLeaderboardChannels();
     if (!channels.length) return;
 
-    const now = Date.now();
+    const now = new Date();
     const channelPairs = channels.map((entry) => ({
       guildId: String(entry.guildId),
       circleId: String(entry.circleId),
@@ -215,7 +215,7 @@ export async function runLeaderboardTick() {
       if (i > 0) {
         await sleep(staggerDelayMs(entry, i));
       }
-      await processDueChannel(entry, pkg, Date.now());
+      await processDueChannel(entry, pkg, new Date());
     }
   } finally {
     tickInFlight = false;
