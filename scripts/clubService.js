@@ -565,7 +565,7 @@ function toHalfwidthAscii(input) {
 
 function normalizeName(raw) {
   let name = toHalfwidthAscii(raw || 'Unknown');
-  name = name.replace(/\s+/g, ' ');
+  name = name.replace(/\s+/g, ' ').replace('☆ ', '');
   return name;
 }
 
@@ -829,7 +829,7 @@ export function buildLeaderboardEmbed(data, targetInfo = null, columnVisibility 
   if (showAvg) headerParts.push(colGap + 'Avg'.padStart(dailyW, ' '));
   if (showToday) headerParts.push(colGap + 'Today'.padStart(todayW, ' '));
   const headerLine = `${headerParts.join('')}  `;
-  const header = `${headerLine}\n${'-'.repeat(Math.max(1, headerLine.trimEnd().length))}  `;
+  const header = `${headerLine}\n${'-'.repeat(Math.max(1, headerLine.trimEnd().length+3))}  `;
 
   const rows = activeMembers.map((m, idx) => {
     const rank = `#${idx + 1}`.padEnd(rankW, ' ');
@@ -847,25 +847,11 @@ export function buildLeaderboardEmbed(data, targetInfo = null, columnVisibility 
 
   const lines = [];
   const currentRank = circle.live_rank ?? circle.monthly_rank ?? '—';
-  lines.push(`**Current Rank:** # ${currentRank}`);
-  lines.push(`**Last Month's Rank:** # ${circle.last_month_rank ?? '—'}`);
+  const dailyFans = circle.monthly_point - (circle.yesterday_points ?? 0);
 
-  if (targetInfo?.kind === 'manual') {
-    lines.push('**Target Tier:** Manual');
-    lines.push(
-      `**Daily Target (per member):** ${formatIntWithCommas(Math.round(targetInfo.dailyTarget))}`,
-    );
-  } else if (targetInfo) {
-    lines.push(`**Target Tier:** ${targetInfo.tierRangeLabel ?? targetInfo.tierLabel}`);
-    lines.push(
-      `**Daily Target (per member):** ${
-        targetInfo.dailyTarget == null ? '—' : formatIntWithCommas(Math.round(targetInfo.dailyTarget))
-      }`,
-    );
-  } else {
-    lines.push('**Target Tier:** — *(set with `/club settings`)*');
-    lines.push('**Daily Target (per member):** —');
-  }
+  lines.push(`**Monthly Fans:** ${circle.monthly_point.toLocaleString('en-US')}`)
+  lines.push(`**Daily Fans:** ${dailyFans.toLocaleString('en-US')}`);
+  lines.push(`**Current Rank:** #${currentRank}`);
 
   if (!activeMembers.length) {
     lines.push('');
